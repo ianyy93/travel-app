@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isValidItinerary(data) {
+      return data.days is list;
+    }
+
+    match /trips/main {
+      // Allow anyone to view the itinerary, but only authenticated users can edit
+      allow read: if true;
+      allow write: if isAuthenticated() && isValidItinerary(request.resource.data);
+    }
+    
+    match /users/{userId} {
+      allow read, write: if request.auth.uid == userId;
+    }
+  }
+}

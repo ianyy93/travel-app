@@ -1,0 +1,5 @@
+{
+  "name": "Arizona Adventure 2026",
+  "description": "A dog-friendly travel itinerary for Phoenix, Grand Canyon, and Sedona.",
+  "requestFramePermissions": ["geolocation"]
+}

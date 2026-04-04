@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "itinerary": {
+      "title": "Itinerary",
+      "description": "The travel itinerary data",
+      "type": "object",
+      "properties": {
+        "days": {
+          "type": "array",
+          "items": {
+            "$ref": "dayPlan"
+          }
+        },
+        "lastUpdated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedBy": {
+          "type": "string"
+        }
+      },
+      "required": ["days"]
+    },
+    "dayPlan": {
+      "title": "Day Plan",
+      "description": "A single day's plan",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "title": { "type": "string" },
+        "activities": {
+          "type": "array",
+          "items": {
+            "$ref": "activity"
+          }
+        }
+      },
+      "required": ["date", "title", "activities"]
+    },
+    "activity": {
+      "title": "Activity",
+      "description": "A single activity",
+      "type": "object",
+      "properties": {
+        "time": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string", "enum": ["flight", "drive", "stay", "activity", "food"] },
+        "location": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        }
+      },
+      "required": ["title", "type"]
+    }
+  },
+  "firestore": {
+    "/trips/main": {
+      "schema": "itinerary",
+      "description": "The main shared trip itinerary"
+    }
+  }
+}
