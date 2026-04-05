@@ -31,6 +31,17 @@ import { cn } from './lib/utils';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
+
+// Fix Leaflet icon issues
+// @ts-ignore
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
 
 // --- Error Handling ---
 
@@ -73,6 +84,96 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 // --- Components ---
+
+// Helper to update map view when center changes
+const ChangeView = ({ center, zoom }: { center: [number, number], zoom: number }) => {
+  const map = useMap();
+  map.setView(center, zoom);
+  return null;
+};
+
+const MapView = ({ itinerary, activeDayIdx }: { itinerary: DayPlan[], activeDayIdx: number }) => {
+  const [selectedMarker, setSelectedMarker] = useState<any>(null);
+
+  const locations = useMemo(() => {
+    const locs: any[] = [];
+    itinerary[activeDayIdx].activities.forEach(act => {
+      if (act.location) locs.push({ ...act.location, type: act.type });
+    });
+    return locs;
+  }, [itinerary, activeDayIdx]);
+
+  const center: [number, number] = useMemo(() => {
+    if (locations.length > 0) {
+      return [locations[0].lat, locations[0].lng];
+    }
+    return [34.0489, -111.0937]; // Arizona center
+  }, [locations]);
+
+  const zoom = locations.length > 1 ? 10 : 12;
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50">
+      <div className="p-4 bg-white border-b border-slate-200">
+        <h2 className="text-xl font-bold text-slate-900">Trip Map</h2>
+        <p className="text-sm text-slate-500">{itinerary[activeDayIdx].date} locations</p>
+      </div>
+      <div className="flex-1 relative z-0">
+        <MapContainer 
+          center={center} 
+          zoom={zoom} 
+          className="w-full h-full"
+          zoomControl={false}
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <ChangeView center={center} zoom={zoom} />
+          
+          {locations.map((loc, i) => (
+            <Marker 
+              key={i} 
+              position={[loc.lat, loc.lng]}
+              eventHandlers={{
+                click: () => setSelectedMarker(loc),
+              }}
+            >
+              <Popup>
+                <div className="p-1">
+                  <p className="text-sm font-bold text-slate-900">{loc.name}</p>
+                  <p className="text-[10px] text-slate-500 uppercase font-bold">{loc.type}</p>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+        </MapContainer>
+
+        {/* Quick List Overlay */}
+        <div className="absolute bottom-4 left-4 right-4 flex gap-2 overflow-x-auto pb-2 scrollbar-hide z-[1000]">
+          {locations.map((loc, i) => (
+            <button
+              key={i}
+              onClick={() => setSelectedMarker(loc)}
+              className={cn(
+                "flex-shrink-0 bg-white/90 backdrop-blur-md p-3 rounded-2xl shadow-lg border transition-all",
+                selectedMarker?.name === loc.name ? "border-blue-500 scale-105" : "border-white/20"
+              )}
+            >
+              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">{loc.type}</p>
+              <p className="text-sm font-semibold text-slate-800 truncate max-w-[120px]">{loc.name}</p>
+            </button>
+          ))}
+          {locations.length === 0 && (
+            <div className="bg-white/90 backdrop-blur-md p-4 rounded-2xl shadow-lg border border-white/20 w-full text-center">
+              <p className="text-sm text-slate-500">No specific locations pinned for this day.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const ActivityIcon = ({ type }: { type: Activity['type'] }) => {
   switch (type) {
@@ -406,17 +507,7 @@ export default function App() {
 
           {activeTab === 'map' && (
             <motion.div key="map" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full pb-20">
-              <div className="p-4 bg-white border-b border-slate-200">
-                <h2 className="text-xl font-bold text-slate-900">Trip Map</h2>
-                <p className="text-sm text-slate-500">Key stops on your Arizona journey</p>
-              </div>
-              <div className="flex-1 h-full bg-slate-200 flex items-center justify-center">
-                <div className="text-center p-8">
-                  <MapIcon className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                  <p className="text-slate-600 font-medium">Interactive Map View</p>
-                  <p className="text-slate-400 text-sm mt-2">Showing locations for {activeDay.date}</p>
-                </div>
-              </div>
+              <MapView itinerary={itinerary} activeDayIdx={activeDayIdx} />
             </motion.div>
           )}
 

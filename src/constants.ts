@@ -110,6 +110,12 @@ export const ITINERARY_DATA: DayPlan[] = [
         description: "Exploring and dinner.",
         type: 'activity',
         location: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 }
+      },
+      {
+        title: "Stay: Four Seasons Scottsdale",
+        description: "Troon North.",
+        type: 'stay',
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       }
     ]
   },
@@ -133,6 +139,12 @@ export const ITINERARY_DATA: DayPlan[] = [
         time: "Late PM",
         title: "Return to Scottsdale",
         type: 'drive'
+      },
+      {
+        title: "Stay: Four Seasons Scottsdale",
+        description: "Troon North.",
+        type: 'stay',
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       }
     ]
   },
@@ -144,6 +156,12 @@ export const ITINERARY_DATA: DayPlan[] = [
         title: "Relax at Four Seasons",
         description: "Optional Scottsdale/Phoenix exploring.",
         type: 'activity'
+      },
+      {
+        title: "Stay: Four Seasons Scottsdale",
+        description: "Troon North.",
+        type: 'stay',
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       }
     ]
   },
