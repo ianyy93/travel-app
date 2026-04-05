@@ -28,19 +28,22 @@ export const ITINERARY_DATA: DayPlan[] = [
         time: "09:30 AM",
         title: "Flight YYZ → PHX",
         description: "Porter PD 641. Arrive at 11:04 AM (Terminal 3).",
-        type: 'flight'
+        type: 'flight',
+        location: { name: "Phoenix Sky Harbor International Airport", lat: 33.4342, lng: -112.0081 }
       },
       {
         time: "12:00 PM",
         title: "Pick up Rental Car",
         description: "Alamo (Hyundai Kona or similar). Sky Harbor Intl. Airport.",
-        type: 'drive'
+        type: 'drive',
+        location: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 }
       },
       {
         time: "01:00 PM",
         title: "Drive to Grand Canyon",
         description: "Approx. 4 hours drive to South Rim.",
-        type: 'drive'
+        type: 'drive',
+        location: { name: "Grand Canyon South Rim Entrance", lat: 35.9899, lng: -112.1211 }
       },
       {
         time: "06:30 PM",
@@ -107,7 +110,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         time: "01:00 PM",
         title: "Drive to Scottsdale",
         description: "Approx. 4 hours drive back south.",
-        type: 'drive'
+        type: 'drive',
+        location: { name: "Scottsdale", lat: 33.4942, lng: -111.9261 }
       },
       {
         title: "Stay: Four Seasons Scottsdale",
@@ -132,7 +136,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         time: "Afternoon",
         title: "Resort Time",
         description: "Pool and spa at Four Seasons.",
-        type: 'activity'
+        type: 'activity',
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
         time: "Evening",
@@ -157,7 +162,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         time: "Early",
         title: "Drive to Sedona",
         description: "Approx. 2 hours drive.",
-        type: 'drive'
+        type: 'drive',
+        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
       },
       {
         title: "Sedona Highlights",
@@ -168,7 +174,8 @@ export const ITINERARY_DATA: DayPlan[] = [
       {
         time: "Late PM",
         title: "Return to Scottsdale",
-        type: 'drive'
+        type: 'drive',
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
         title: "Stay: Four Seasons Scottsdale",
@@ -185,7 +192,8 @@ export const ITINERARY_DATA: DayPlan[] = [
       {
         title: "Relax at Four Seasons",
         description: "Optional Scottsdale/Phoenix exploring.",
-        type: 'activity'
+        type: 'activity',
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
         title: "Stay: Four Seasons Scottsdale",
@@ -202,19 +210,22 @@ export const ITINERARY_DATA: DayPlan[] = [
       {
         time: "09:30 AM",
         title: "Depart Scottsdale",
-        type: 'drive'
+        type: 'drive',
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
         time: "10:30 AM",
         title: "Return Rental Car",
         description: "Sky Harbor Intl. Airport.",
-        type: 'drive'
+        type: 'drive',
+        location: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 }
       },
       {
         time: "12:05 PM",
         title: "Flight PHX → YYZ",
         description: "Porter PD 642. Arrive at 07:19 PM.",
-        type: 'flight'
+        type: 'flight',
+        location: { name: "Phoenix Sky Harbor International Airport", lat: 33.4342, lng: -112.0081 }
       }
     ]
   }
@@ -245,3 +256,12 @@ export const RENTAL_DETAILS = {
   phone: "844-370-9817",
   confirmation: "ALM-992104B"
 };
+
+export const GAS_STATIONS = [
+  { name: "Costco Gas", address: "Phoenix, AZ", lat: 33.4484, lng: -112.0740, regular: "$3.85", brand: "Costco" },
+  { name: "Chevron", address: "Grand Canyon Village, AZ", lat: 36.0544, lng: -112.1401, regular: "$4.45", brand: "Chevron" },
+  { name: "Shell", address: "Sedona, AZ", lat: 34.8697, lng: -111.7610, regular: "$4.15", brand: "Shell" },
+  { name: "QuikTrip", address: "Scottsdale, AZ", lat: 33.4942, lng: -111.9261, regular: "$3.95", brand: "QuikTrip" },
+  { name: "Circle K", address: "Phoenix, AZ", lat: 33.5000, lng: -112.1000, regular: "$3.89", brand: "Circle K" },
+  { name: "Maverik", address: "Flagstaff, AZ", lat: 35.1983, lng: -111.6513, regular: "$4.05", brand: "Maverik" },
+];

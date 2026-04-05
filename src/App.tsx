@@ -7,7 +7,6 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Calendar, 
-  Map as MapIcon, 
   Info, 
   Plane, 
   Car, 
@@ -26,14 +25,14 @@ import {
   X,
   LogIn
 } from 'lucide-react';
-import { ITINERARY_DATA, FLIGHT_DETAILS, RENTAL_DETAILS, DayPlan, Activity } from './constants';
+import { ITINERARY_DATA, FLIGHT_DETAILS, RENTAL_DETAILS, GAS_STATIONS, DayPlan, Activity } from './constants';
 import { cn } from './lib/utils';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { Fuel, Navigation } from 'lucide-react';
+import { Fuel, Navigation, Map as MapIcon, Share2, Info as InfoIcon } from 'lucide-react';
 
 // Fix Leaflet icon issues
 // @ts-ignore
@@ -86,6 +85,32 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 // --- Components ---
 
+const getAppleMapsUrl = (loc: { lat: number, lng: number, name: string }) => 
+  `http://maps.apple.com/?daddr=${loc.lat},${loc.lng}&t=m`;
+
+const getGoogleMapsUrl = (loc: { lat: number, lng: number, name: string }) => 
+  `https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}&travelmode=driving`;
+
+const getDayRouteUrl = (locations: any[], provider: 'apple' | 'google') => {
+  if (locations.length === 0) return null;
+  
+  if (provider === 'apple') {
+    let url = "http://maps.apple.com/?dirflg=d&saddr=Current+Location";
+    const destination = locations[locations.length - 1];
+    const waypoints = locations.slice(0, -1);
+    
+    url += `&daddr=${destination.lat},${destination.lng}`;
+    if (waypoints.length > 0) {
+      url += `&to=${waypoints.map(w => `${w.lat},${w.lng}`).join("&to=")}`;
+    }
+    return url;
+  } else {
+    const destination = `${locations[locations.length - 1].lat},${locations[locations.length - 1].lng}`;
+    const waypoints = locations.slice(0, -1).map(w => `${w.lat},${w.lng}`).join('|');
+    return `https://www.google.com/maps/dir/?api=1&origin=Current+Location&destination=${destination}${waypoints ? `&waypoints=${waypoints}` : ''}&travelmode=driving`;
+  }
+};
+
 // Helper to update map view when center changes
 const ChangeView = ({ center, zoom }: { center: [number, number], zoom: number }) => {
   const map = useMap();
@@ -93,144 +118,86 @@ const ChangeView = ({ center, zoom }: { center: [number, number], zoom: number }
   return null;
 };
 
-const MapView = ({ itinerary, activeDayIdx }: { itinerary: DayPlan[], activeDayIdx: number }) => {
-  const locations = useMemo(() => {
-    const locs: any[] = [];
-    itinerary[activeDayIdx].activities.forEach(act => {
-      if (act.location) locs.push({ ...act.location, type: act.type });
+const GasPricesView = ({ userLoc }: { userLoc: [number, number] | null }) => {
+  const [selectedStation, setSelectedStation] = useState<any>(null);
+
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 3958.8; // Miles
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  const sortedStations = useMemo(() => {
+    if (!userLoc) return GAS_STATIONS;
+    return [...GAS_STATIONS].sort((a, b) => {
+      const distA = calculateDistance(userLoc[0], userLoc[1], a.lat, a.lng);
+      const distB = calculateDistance(userLoc[0], userLoc[1], b.lat, b.lng);
+      return distA - distB;
     });
-    return locs;
-  }, [itinerary, activeDayIdx]);
+  }, [userLoc]);
 
-  const appleMapsUrl = useMemo(() => {
-    if (locations.length === 0) return null;
-    
-    // Base URL for Apple Maps
-    let url = "http://maps.apple.com/?dirflg=d";
-    
-    if (locations.length === 1) {
-      url += `&daddr=${locations[0].lat},${locations[0].lng}`;
-    } else {
-      // Start at first location, waypoints in between, end at last location
-      const start = locations[0];
-      const end = locations[locations.length - 1];
-      const waypoints = locations.slice(1, -1);
-      
-      url += `&saddr=${start.lat},${start.lng}`;
-      url += `&daddr=${end.lat},${end.lng}`;
-      
-      if (waypoints.length > 0) {
-        const waypointStr = waypoints.map(w => `${w.lat},${w.lng}`).join("+to:");
-        url += `+to:${waypointStr}`;
-      }
-    }
-    
-    return url;
-  }, [locations]);
+  const mapCenter: [number, number] = userLoc || [34.0489, -111.0937];
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
-      <div className="p-4 bg-white border-b border-slate-200">
-        <h2 className="text-xl font-bold text-slate-900">Day Directions</h2>
-        <p className="text-sm text-slate-500">{itinerary[activeDayIdx].date} route</p>
+      <div className="p-4 bg-white border-b border-slate-200 shrink-0">
+        <h2 className="text-xl font-bold text-slate-900">Gas Stations</h2>
+        <p className="text-sm text-slate-500">Sorted by proximity to you</p>
       </div>
       
-      <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
-        <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-          <Navigation className="w-10 h-10 text-blue-600" />
-        </div>
-        
-        <h3 className="text-xl font-bold text-slate-900 mb-2">Open in Apple Maps</h3>
-        <p className="text-slate-500 mb-8 max-w-xs">
-          Get turn-by-turn directions for all {locations.length} stops scheduled for {itinerary[activeDayIdx].date}.
-        </p>
-
-        {appleMapsUrl ? (
-          <a 
-            href={appleMapsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full max-w-xs bg-blue-600 text-white py-4 px-6 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-200 active:scale-95 transition-transform"
-          >
-            <ExternalLink className="w-5 h-5" />
-            Start Navigation
-          </a>
-        ) : (
-          <div className="bg-slate-100 text-slate-400 py-4 px-6 rounded-2xl font-bold w-full max-w-xs">
-            No locations set for today
-          </div>
-        )}
-
-        <div className="mt-12 w-full max-w-xs text-left">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Waypoints</p>
-          <div className="space-y-3">
-            {locations.map((loc, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-600">
-                  {i + 1}
+      <div className="h-[30vh] shrink-0 relative z-0">
+        <MapContainer center={mapCenter} zoom={7} className="w-full h-full" zoomControl={false}>
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          {userLoc && <ChangeView center={userLoc} zoom={10} />}
+          {GAS_STATIONS.map((station, i) => (
+            <Marker 
+              key={i} 
+              position={[station.lat, station.lng]}
+              eventHandlers={{ click: () => setSelectedStation(station) }}
+            >
+              <Popup>
+                <div className="p-1">
+                  <p className="text-sm font-bold">{station.name}</p>
+                  <p className="text-xs text-blue-600 font-bold">{station.regular}</p>
                 </div>
-                <p className="text-sm font-medium text-slate-700">{loc.name}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const GasPricesView = () => {
-  // Mock data for gas prices in Arizona
-  const gasData = [
-    { city: "Phoenix", regular: "$3.85", premium: "$4.25", station: "Costco" },
-    { city: "Grand Canyon", regular: "$4.45", premium: "$4.85", station: "Chevron" },
-    { city: "Sedona", regular: "$4.15", premium: "$4.55", station: "Shell" },
-    { city: "Scottsdale", regular: "$3.95", premium: "$4.35", station: "QuikTrip" },
-  ];
-
-  return (
-    <div className="flex flex-col h-full bg-slate-50">
-      <div className="p-4 bg-white border-b border-slate-200">
-        <h2 className="text-xl font-bold text-slate-900">Gas Prices</h2>
-        <p className="text-sm text-slate-500">Arizona average estimates</p>
-      </div>
-      
-      <div className="flex-1 p-4 space-y-4 overflow-y-auto pb-24">
-        <div className="bg-blue-600 rounded-3xl p-6 text-white shadow-lg shadow-blue-100">
-          <div className="flex items-center gap-3 mb-4">
-            <Fuel className="w-6 h-6" />
-            <h3 className="font-bold">Trip Fuel Tip</h3>
-          </div>
-          <p className="text-blue-50 text-sm leading-relaxed">
-            Gas is significantly more expensive near the Grand Canyon. Fill up in Williams or Flagstaff before heading to the South Rim to save.
-          </p>
-        </div>
-
-        <div className="grid gap-3">
-          {gasData.map((item, i) => (
-            <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{item.city}</p>
-                <p className="font-bold text-slate-800">{item.station}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-lg font-black text-slate-900">{item.regular}</p>
-                <p className="text-[10px] text-slate-500 font-bold uppercase">Regular</p>
-              </div>
-            </div>
+              </Popup>
+            </Marker>
           ))}
-        </div>
+        </MapContainer>
+      </div>
 
-        <div className="p-4 text-center">
-          <p className="text-xs text-slate-400">Data sourced from regional averages.</p>
-          <a 
-            href="https://www.gasbuddy.com/home?search=Arizona" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-xs text-blue-600 font-bold mt-1 inline-block"
-          >
-            View live on GasBuddy →
-          </a>
+      <div className="flex-1 p-4 space-y-4 overflow-y-auto pb-32">
+        <div className="grid gap-3">
+          {sortedStations.map((item, i) => {
+            const dist = userLoc ? calculateDistance(userLoc[0], userLoc[1], item.lat, item.lng).toFixed(1) : null;
+            return (
+              <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{item.brand}</p>
+                    {dist && <span className="text-[10px] font-bold text-blue-600 uppercase">{dist} mi away</span>}
+                  </div>
+                  <p className="font-bold text-slate-800">{item.name}</p>
+                  <p className="text-[10px] text-slate-400">{item.address}</p>
+                </div>
+                <div className="text-right flex flex-col gap-2">
+                  <p className="text-lg font-black text-slate-900">{item.regular}</p>
+                  <div className="flex gap-1">
+                    <a href={getAppleMapsUrl(item)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><Navigation className="w-3 h-3" /></a>
+                    <a href={getGoogleMapsUrl(item)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><MapIcon className="w-3 h-3" /></a>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -342,12 +309,28 @@ const EditActivityModal = ({
 // --- Main App ---
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'itinerary' | 'map' | 'gas' | 'info'>('itinerary');
+  const [activeTab, setActiveTab] = useState<'itinerary' | 'gas' | 'info'>('itinerary');
   const [activeDayIdx, setActiveDayIdx] = useState(0);
   const [itinerary, setItinerary] = useState<DayPlan[]>(ITINERARY_DATA);
   const [user, setUser] = useState<User | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editingActivity, setEditingActivity] = useState<{ dayIdx: number, actIdx: number | null } | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
+
+  // Update current time for position indicator
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Get user location
+  useEffect(() => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setUserLoc([pos.coords.latitude, pos.coords.longitude]),
+      (err) => console.error("Geolocation failed", err)
+    );
+  }, []);
 
   // Auth & Sync
   useEffect(() => {
@@ -432,21 +415,34 @@ export default function App() {
 
   const activeDay = itinerary[activeDayIdx];
 
-  return (
-    <div className="max-w-md mx-auto h-screen bg-slate-50 flex flex-col font-sans shadow-2xl overflow-hidden relative">
-      {/* iOS Status Bar Simulation */}
-      <div className="h-12 bg-white flex items-center justify-between px-8 pt-4 shrink-0">
-        <span className="text-sm font-bold">9:41</span>
-        <div className="flex items-center gap-1.5">
-          <div className="w-4 h-4 rounded-full border-2 border-slate-900" />
-          <div className="w-5 h-2.5 rounded-sm border border-slate-900 relative">
-            <div className="absolute inset-0.5 bg-slate-900 rounded-px" />
-          </div>
-        </div>
-      </div>
+  const dayLocations = useMemo(() => {
+    return activeDay.activities
+      .filter(a => a.location)
+      .map(a => a.location);
+  }, [activeDay]);
 
+  // Check if an activity is "current"
+  const isCurrentActivity = (activity: Activity) => {
+    if (!activity.time) return false;
+    // For demo purposes, we'll check if the date matches May 14-19, 2026
+    // In a real app, we'd parse the activity.time and compare with currentTime
+    // Since the trip is in the future, we'll just mock this logic
+    const tripYear = 2026;
+    const tripMonth = 4; // May
+    const day = parseInt(activeDay.date.split(' ')[1]);
+    
+    if (currentTime.getFullYear() === tripYear && currentTime.getMonth() === tripMonth && currentTime.getDate() === day) {
+      // Very simple mock: if it's the right day, highlight the first activity for now
+      // A more robust version would parse "09:30 AM" and compare
+      return true;
+    }
+    return false;
+  };
+
+  return (
+    <div className="max-w-md mx-auto h-[100dvh] bg-slate-50 flex flex-col font-sans shadow-2xl overflow-hidden relative">
       {/* Header */}
-      <header className="px-6 pt-4 pb-4 bg-white border-b border-slate-100">
+      <header className="px-6 pt-6 pb-4 bg-white border-b border-slate-100 shrink-0 z-40">
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Arizona 2026</h1>
           <div className="flex items-center gap-2">
@@ -488,9 +484,7 @@ export default function App() {
             </button>
           ))}
         </div>
-      </header>
-
-      {/* Content */}
+      </header>      {/* Content */}
       <main className="flex-1 overflow-y-auto scrollbar-hide">
         <AnimatePresence mode="wait">
           {activeTab === 'itinerary' && (
@@ -499,89 +493,161 @@ export default function App() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="p-6 pb-24"
+              className="p-6 pb-32"
             >
-              <div className="mb-6">
-                <h2 className="text-xl font-bold text-slate-900">{activeDay.title}</h2>
-                <p className="text-sm text-slate-500">Day {activeDayIdx + 1} of your trip</p>
-              </div>
-
-              <div className="space-y-3">
-                {activeDay.activities.map((activity, idx) => (
-                  <div key={idx} className="relative group">
-                    <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-                      <div className="flex items-start gap-3">
-                        <div className={cn(
-                          "mt-1 p-2 rounded-xl",
-                          activity.type === 'flight' ? "bg-purple-50 text-purple-600" :
-                          activity.type === 'drive' ? "bg-orange-50 text-orange-600" :
-                          activity.type === 'stay' ? "bg-indigo-50 text-indigo-600" :
-                          "bg-emerald-50 text-emerald-600"
-                        )}>
-                          <ActivityIcon type={activity.type} />
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                              {activity.title}
-                              {activity.description?.toLowerCase().includes('dog') && (
-                                <span className="px-1.5 py-0.5 bg-orange-100 text-orange-600 text-[8px] font-black uppercase rounded-md flex items-center gap-0.5">
-                                  <Dog className="w-2 h-2" /> Dog Friendly
-                                </span>
-                              )}
-                            </h4>
-                            {activity.time && (
-                              <span className="text-[10px] font-medium text-slate-400 flex items-center gap-1">
-                                <Clock className="w-3 h-3" /> {activity.time}
-                              </span>
-                            )}
-                          </div>
-                          {activity.description && (
-                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                              {activity.description}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    {isEditing && (
-                      <button 
-                        onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: idx })}
-                        className="absolute -top-2 -right-2 p-2 bg-blue-600 text-white rounded-full shadow-lg z-10"
-                      >
-                        <Edit2 className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-                
-                {isEditing && (
-                  <button 
-                    onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: null })}
-                    className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 flex items-center justify-center gap-2 font-bold hover:border-blue-400 hover:text-blue-500 transition-colors"
+              <div className="mb-6 flex justify-between items-start">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">{activeDay.title}</h2>
+                  <p className="text-sm text-slate-500">Day {activeDayIdx + 1} • {activeDay.date}</p>
+                </div>
+                <div className="flex gap-2">
+                  <a 
+                    href={getDayRouteUrl(dayLocations, 'apple') || '#'} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                    title="Apple Maps Route"
                   >
-                    <Plus className="w-5 h-5" /> Add Activity
-                  </button>
-                )}
+                    <Navigation className="w-4 h-4" />
+                  </a>
+                  <a 
+                    href={getDayRouteUrl(dayLocations, 'google') || '#'} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                    title="Google Maps Route"
+                  >
+                    <MapIcon className="w-4 h-4" />
+                  </a>
+                </div>
               </div>
-            </motion.div>
-          )}
 
-          {activeTab === 'map' && (
-            <motion.div key="map" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full pb-20">
-              <MapView itinerary={itinerary} activeDayIdx={activeDayIdx} />
+              <div className="relative">
+                {/* Timeline Line */}
+                <div className="absolute left-[19px] top-4 bottom-4 w-0.5 bg-slate-100" />
+
+                <div className="space-y-6">
+                  {activeDay.activities.map((activity, idx) => {
+                    const isCurrent = isCurrentActivity(activity) && idx === 0; // Simplified for demo
+                    return (
+                      <div key={idx} className="relative pl-10 group">
+                        {/* Timeline Dot */}
+                        <div className={cn(
+                          "absolute left-0 top-5 w-10 h-10 -ml-[1px] rounded-full border-4 border-white z-10 flex items-center justify-center transition-all",
+                          isCurrent ? "bg-blue-600 scale-110 shadow-lg shadow-blue-100" : "bg-slate-200"
+                        )}>
+                          <div className={cn("w-2 h-2 rounded-full", isCurrent ? "bg-white" : "bg-slate-400")} />
+                        </div>
+
+                        {/* Current Indicator Label */}
+                        {isCurrent && (
+                          <div className="absolute -left-2 top-0 text-[8px] font-black text-blue-600 uppercase tracking-tighter bg-white px-1 rounded border border-blue-100 z-20">
+                            Now
+                          </div>
+                        )}
+
+                        <div className={cn(
+                          "bg-white p-4 rounded-2xl border shadow-sm transition-all",
+                          isCurrent ? "border-blue-100 ring-1 ring-blue-50" : "border-slate-100"
+                        )}>
+                          <div className="flex items-start gap-3">
+                            <div className={cn(
+                              "mt-1 p-2 rounded-xl shrink-0",
+                              activity.type === 'flight' ? "bg-purple-50 text-purple-600" :
+                              activity.type === 'drive' ? "bg-orange-50 text-orange-600" :
+                              activity.type === 'stay' ? "bg-indigo-50 text-indigo-600" :
+                              "bg-emerald-50 text-emerald-600"
+                            )}>
+                              <ActivityIcon type={activity.type} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <h4 className="text-sm font-bold text-slate-800 truncate">
+                                  {activity.title}
+                                </h4>
+                                {activity.time && (
+                                  <span className="text-[10px] font-medium text-slate-400 shrink-0 flex items-center gap-1">
+                                    <Clock className="w-3 h-3" /> {activity.time}
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {activity.description && (
+                                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                  {activity.description}
+                                </p>
+                              )}
+
+                              {activity.location && (
+                                <div className="mt-3 pt-3 border-t border-slate-50 flex items-center justify-between">
+                                  <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" /> {activity.location.name}
+                                  </span>
+                                  <div className="flex gap-2">
+                                    <a 
+                                      href={getAppleMapsUrl(activity.location)} 
+                                      target="_blank" 
+                                      rel="noreferrer"
+                                      className="p-1.5 bg-slate-50 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
+                                    >
+                                      <Navigation className="w-3 h-3" />
+                                    </a>
+                                    <a 
+                                      href={getGoogleMapsUrl(activity.location)} 
+                                      target="_blank" 
+                                      rel="noreferrer"
+                                      className="p-1.5 bg-slate-50 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
+                                    >
+                                      <MapIcon className="w-3 h-3" />
+                                    </a>
+                                  </div>
+                                </div>
+                              )}
+
+                              {activity.description?.toLowerCase().includes('dog') && (
+                                <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 text-[8px] font-black uppercase rounded-full">
+                                  <Dog className="w-2 h-2" /> Dog Friendly
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {isEditing && (
+                          <button 
+                            onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: idx })}
+                            className="absolute -top-2 -right-2 p-2 bg-blue-600 text-white rounded-full shadow-lg z-10"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  
+                  {isEditing && (
+                    <div className="pl-10">
+                      <button 
+                        onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: null })}
+                        className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 flex items-center justify-center gap-2 font-bold hover:border-blue-400 hover:text-blue-500 transition-colors"
+                      >
+                        <Plus className="w-5 h-5" /> Add Activity
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </motion.div>
           )}
 
           {activeTab === 'gas' && (
-            <motion.div key="gas" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full pb-20">
-              <GasPricesView />
+            <motion.div key="gas" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full pb-32">
+              <GasPricesView userLoc={userLoc} />
             </motion.div>
           )}
 
           {activeTab === 'info' && (
             <motion.div key="info" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
-              <div className="p-6 space-y-8 bg-slate-50 min-h-full pb-24">
+              <div className="p-6 space-y-8 bg-slate-50 min-h-full pb-32">
                 <section>
                   <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
                     <Plane className="w-5 h-5 text-blue-600" /> Flight Info
@@ -667,12 +733,9 @@ export default function App() {
       )}
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-between items-center z-50">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-around items-center z-50">
         <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")}>
           <Calendar className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Itinerary</span>
-        </button>
-        <button onClick={() => setActiveTab('map')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'map' ? "text-blue-600" : "text-slate-400")}>
-          <Navigation className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Directions</span>
         </button>
         <button onClick={() => setActiveTab('gas')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'gas' ? "text-blue-600" : "text-slate-400")}>
           <Fuel className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Gas</span>
@@ -681,9 +744,6 @@ export default function App() {
           <Info className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Details</span>
         </button>
       </nav>
-
-      {/* iOS Home Indicator Simulation */}
-      <div className="fixed bottom-2 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-slate-200 rounded-full z-[60] pointer-events-none" />
     </div>
   );
 }
