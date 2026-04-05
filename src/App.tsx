@@ -33,6 +33,7 @@ import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
+import { Fuel, Navigation } from 'lucide-react';
 
 // Fix Leaflet icon issues
 // @ts-ignore
@@ -93,8 +94,6 @@ const ChangeView = ({ center, zoom }: { center: [number, number], zoom: number }
 };
 
 const MapView = ({ itinerary, activeDayIdx }: { itinerary: DayPlan[], activeDayIdx: number }) => {
-  const [selectedMarker, setSelectedMarker] = useState<any>(null);
-
   const locations = useMemo(() => {
     const locs: any[] = [];
     itinerary[activeDayIdx].activities.forEach(act => {
@@ -103,72 +102,135 @@ const MapView = ({ itinerary, activeDayIdx }: { itinerary: DayPlan[], activeDayI
     return locs;
   }, [itinerary, activeDayIdx]);
 
-  const center: [number, number] = useMemo(() => {
-    if (locations.length > 0) {
-      return [locations[0].lat, locations[0].lng];
+  const appleMapsUrl = useMemo(() => {
+    if (locations.length === 0) return null;
+    
+    // Base URL for Apple Maps
+    let url = "http://maps.apple.com/?dirflg=d";
+    
+    if (locations.length === 1) {
+      url += `&daddr=${locations[0].lat},${locations[0].lng}`;
+    } else {
+      // Start at first location, waypoints in between, end at last location
+      const start = locations[0];
+      const end = locations[locations.length - 1];
+      const waypoints = locations.slice(1, -1);
+      
+      url += `&saddr=${start.lat},${start.lng}`;
+      url += `&daddr=${end.lat},${end.lng}`;
+      
+      if (waypoints.length > 0) {
+        const waypointStr = waypoints.map(w => `${w.lat},${w.lng}`).join("+to:");
+        url += `+to:${waypointStr}`;
+      }
     }
-    return [34.0489, -111.0937]; // Arizona center
+    
+    return url;
   }, [locations]);
-
-  const zoom = locations.length > 1 ? 10 : 12;
 
   return (
     <div className="flex flex-col h-full bg-slate-50">
       <div className="p-4 bg-white border-b border-slate-200">
-        <h2 className="text-xl font-bold text-slate-900">Trip Map</h2>
-        <p className="text-sm text-slate-500">{itinerary[activeDayIdx].date} locations</p>
+        <h2 className="text-xl font-bold text-slate-900">Day Directions</h2>
+        <p className="text-sm text-slate-500">{itinerary[activeDayIdx].date} route</p>
       </div>
-      <div className="flex-1 relative z-0">
-        <MapContainer 
-          center={center} 
-          zoom={zoom} 
-          className="w-full h-full"
-          zoomControl={false}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <ChangeView center={center} zoom={zoom} />
-          
-          {locations.map((loc, i) => (
-            <Marker 
-              key={i} 
-              position={[loc.lat, loc.lng]}
-              eventHandlers={{
-                click: () => setSelectedMarker(loc),
-              }}
-            >
-              <Popup>
-                <div className="p-1">
-                  <p className="text-sm font-bold text-slate-900">{loc.name}</p>
-                  <p className="text-[10px] text-slate-500 uppercase font-bold">{loc.type}</p>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
+      
+      <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
+        <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+          <Navigation className="w-10 h-10 text-blue-600" />
+        </div>
+        
+        <h3 className="text-xl font-bold text-slate-900 mb-2">Open in Apple Maps</h3>
+        <p className="text-slate-500 mb-8 max-w-xs">
+          Get turn-by-turn directions for all {locations.length} stops scheduled for {itinerary[activeDayIdx].date}.
+        </p>
 
-        {/* Quick List Overlay */}
-        <div className="absolute bottom-4 left-4 right-4 flex gap-2 overflow-x-auto pb-2 scrollbar-hide z-[1000]">
-          {locations.map((loc, i) => (
-            <button
-              key={i}
-              onClick={() => setSelectedMarker(loc)}
-              className={cn(
-                "flex-shrink-0 bg-white/90 backdrop-blur-md p-3 rounded-2xl shadow-lg border transition-all",
-                selectedMarker?.name === loc.name ? "border-blue-500 scale-105" : "border-white/20"
-              )}
-            >
-              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">{loc.type}</p>
-              <p className="text-sm font-semibold text-slate-800 truncate max-w-[120px]">{loc.name}</p>
-            </button>
-          ))}
-          {locations.length === 0 && (
-            <div className="bg-white/90 backdrop-blur-md p-4 rounded-2xl shadow-lg border border-white/20 w-full text-center">
-              <p className="text-sm text-slate-500">No specific locations pinned for this day.</p>
+        {appleMapsUrl ? (
+          <a 
+            href={appleMapsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full max-w-xs bg-blue-600 text-white py-4 px-6 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-200 active:scale-95 transition-transform"
+          >
+            <ExternalLink className="w-5 h-5" />
+            Start Navigation
+          </a>
+        ) : (
+          <div className="bg-slate-100 text-slate-400 py-4 px-6 rounded-2xl font-bold w-full max-w-xs">
+            No locations set for today
+          </div>
+        )}
+
+        <div className="mt-12 w-full max-w-xs text-left">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Waypoints</p>
+          <div className="space-y-3">
+            {locations.map((loc, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-600">
+                  {i + 1}
+                </div>
+                <p className="text-sm font-medium text-slate-700">{loc.name}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const GasPricesView = () => {
+  // Mock data for gas prices in Arizona
+  const gasData = [
+    { city: "Phoenix", regular: "$3.85", premium: "$4.25", station: "Costco" },
+    { city: "Grand Canyon", regular: "$4.45", premium: "$4.85", station: "Chevron" },
+    { city: "Sedona", regular: "$4.15", premium: "$4.55", station: "Shell" },
+    { city: "Scottsdale", regular: "$3.95", premium: "$4.35", station: "QuikTrip" },
+  ];
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50">
+      <div className="p-4 bg-white border-b border-slate-200">
+        <h2 className="text-xl font-bold text-slate-900">Gas Prices</h2>
+        <p className="text-sm text-slate-500">Arizona average estimates</p>
+      </div>
+      
+      <div className="flex-1 p-4 space-y-4 overflow-y-auto pb-24">
+        <div className="bg-blue-600 rounded-3xl p-6 text-white shadow-lg shadow-blue-100">
+          <div className="flex items-center gap-3 mb-4">
+            <Fuel className="w-6 h-6" />
+            <h3 className="font-bold">Trip Fuel Tip</h3>
+          </div>
+          <p className="text-blue-50 text-sm leading-relaxed">
+            Gas is significantly more expensive near the Grand Canyon. Fill up in Williams or Flagstaff before heading to the South Rim to save.
+          </p>
+        </div>
+
+        <div className="grid gap-3">
+          {gasData.map((item, i) => (
+            <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{item.city}</p>
+                <p className="font-bold text-slate-800">{item.station}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-lg font-black text-slate-900">{item.regular}</p>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Regular</p>
+              </div>
             </div>
-          )}
+          ))}
+        </div>
+
+        <div className="p-4 text-center">
+          <p className="text-xs text-slate-400">Data sourced from regional averages.</p>
+          <a 
+            href="https://www.gasbuddy.com/home?search=Arizona" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-xs text-blue-600 font-bold mt-1 inline-block"
+          >
+            View live on GasBuddy →
+          </a>
         </div>
       </div>
     </div>
@@ -280,7 +342,7 @@ const EditActivityModal = ({
 // --- Main App ---
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'itinerary' | 'map' | 'info'>('itinerary');
+  const [activeTab, setActiveTab] = useState<'itinerary' | 'map' | 'gas' | 'info'>('itinerary');
   const [activeDayIdx, setActiveDayIdx] = useState(0);
   const [itinerary, setItinerary] = useState<DayPlan[]>(ITINERARY_DATA);
   const [user, setUser] = useState<User | null>(null);
@@ -511,6 +573,12 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'gas' && (
+            <motion.div key="gas" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full pb-20">
+              <GasPricesView />
+            </motion.div>
+          )}
+
           {activeTab === 'info' && (
             <motion.div key="info" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
               <div className="p-6 space-y-8 bg-slate-50 min-h-full pb-24">
@@ -518,15 +586,38 @@ export default function App() {
                   <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
                     <Plane className="w-5 h-5 text-blue-600" /> Flight Info
                   </h2>
-                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Outbound • {FLIGHT_DETAILS.outbound.date}</p>
-                    <div className="flex items-center justify-between">
-                      <div><p className="text-xl font-bold text-slate-900">YYZ</p><p className="text-xs text-slate-500">09:30 AM</p></div>
-                      <div className="flex flex-col items-center px-4 flex-1">
-                        <p className="text-[10px] font-bold text-blue-600 mb-1">{FLIGHT_DETAILS.outbound.number}</p>
-                        <div className="w-full h-[1px] bg-slate-200 relative"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
+                  <div className="space-y-3">
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                      <div className="flex justify-between items-start mb-2">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Outbound • {FLIGHT_DETAILS.outbound.date}</p>
+                        <div className="text-right">
+                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {FLIGHT_DETAILS.outbound.confirmation}</p>
+                        </div>
                       </div>
-                      <div className="text-right"><p className="text-xl font-bold text-slate-900">PHX</p><p className="text-xs text-slate-500">11:04 AM</p></div>
+                      <div className="flex items-center justify-between">
+                        <div><p className="text-xl font-bold text-slate-900">YYZ</p><p className="text-xs text-slate-500">09:30 AM</p></div>
+                        <div className="flex flex-col items-center px-4 flex-1">
+                          <p className="text-[10px] font-bold text-blue-600 mb-1">{FLIGHT_DETAILS.outbound.number}</p>
+                          <div className="w-full h-[1px] bg-slate-200 relative"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
+                        </div>
+                        <div className="text-right"><p className="text-xl font-bold text-slate-900">PHX</p><p className="text-xs text-slate-500">11:04 AM</p></div>
+                      </div>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                      <div className="flex justify-between items-start mb-2">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Return • {FLIGHT_DETAILS.return.date}</p>
+                        <div className="text-right">
+                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {FLIGHT_DETAILS.return.confirmation}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div><p className="text-xl font-bold text-slate-900">PHX</p><p className="text-xs text-slate-500">12:05 PM</p></div>
+                        <div className="flex flex-col items-center px-4 flex-1">
+                          <p className="text-[10px] font-bold text-blue-600 mb-1">{FLIGHT_DETAILS.return.number}</p>
+                          <div className="w-full h-[1px] bg-slate-200 relative rotate-180"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
+                        </div>
+                        <div className="text-right"><p className="text-xl font-bold text-slate-900">YYZ</p><p className="text-xs text-slate-500">07:19 PM</p></div>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -536,8 +627,22 @@ export default function App() {
                   </h2>
                   <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
                     <div className="flex items-center justify-between mb-4">
-                      <div><h3 className="font-bold text-slate-900">{RENTAL_DETAILS.company}</h3><p className="text-xs text-slate-500">{RENTAL_DETAILS.car}</p></div>
+                      <div>
+                        <h3 className="font-bold text-slate-900">{RENTAL_DETAILS.company}</h3>
+                        <p className="text-xs text-slate-500">{RENTAL_DETAILS.car}</p>
+                        <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mt-1">Ref: {RENTAL_DETAILS.confirmation}</p>
+                      </div>
                       <div className="p-2 bg-blue-50 rounded-full"><Car className="w-5 h-5 text-blue-600" /></div>
+                    </div>
+                    <div className="space-y-2 mb-4">
+                      <div className="flex justify-between text-[10px]">
+                        <span className="text-slate-400 font-bold uppercase">Pickup</span>
+                        <span className="text-slate-700 font-medium">{RENTAL_DETAILS.pickup}</span>
+                      </div>
+                      <div className="flex justify-between text-[10px]">
+                        <span className="text-slate-400 font-bold uppercase">Dropoff</span>
+                        <span className="text-slate-700 font-medium">{RENTAL_DETAILS.dropoff}</span>
+                      </div>
                     </div>
                     <a href={`tel:${RENTAL_DETAILS.phone}`} className="w-full flex items-center justify-center gap-2 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold">Call Alamo <ExternalLink className="w-4 h-4" /></a>
                   </div>
@@ -562,12 +667,15 @@ export default function App() {
       )}
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-8 py-4 pb-10 flex justify-between items-center z-50">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-between items-center z-50">
         <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")}>
           <Calendar className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Itinerary</span>
         </button>
         <button onClick={() => setActiveTab('map')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'map' ? "text-blue-600" : "text-slate-400")}>
-          <MapIcon className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Map</span>
+          <Navigation className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Directions</span>
+        </button>
+        <button onClick={() => setActiveTab('gas')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'gas' ? "text-blue-600" : "text-slate-400")}>
+          <Fuel className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Gas</span>
         </button>
         <button onClick={() => setActiveTab('info')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'info' ? "text-blue-600" : "text-slate-400")}>
           <Info className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Details</span>

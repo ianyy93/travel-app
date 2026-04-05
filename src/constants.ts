@@ -65,13 +65,43 @@ export const ITINERARY_DATA: DayPlan[] = [
         time: "06:30 AM",
         title: "Early Entry & Rim Trail",
         description: "Mather → Yavapai → Village. Avoid midday heat.",
-        type: 'activity'
+        type: 'activity',
+        location: { name: "Grand Canyon Village", lat: 36.0544, lng: -112.1401 }
       },
       {
         time: "10:00 AM",
-        title: "Desert View Drive",
-        description: "Scenic drive with stops: Grandview, Moran, Lipan, Navajo, Watchtower.",
-        type: 'drive'
+        title: "Desert View Drive: Grandview Point",
+        description: "First major stop on Desert View Drive.",
+        type: 'activity',
+        location: { name: "Grandview Point", lat: 35.9984, lng: -111.9872 }
+      },
+      {
+        time: "10:30 AM",
+        title: "Desert View Drive: Moran Point",
+        description: "Great views of the Colorado River.",
+        type: 'activity',
+        location: { name: "Moran Point", lat: 36.0048, lng: -111.9241 }
+      },
+      {
+        time: "11:00 AM",
+        title: "Desert View Drive: Lipan Point",
+        description: "One of the widest views of the canyon.",
+        type: 'activity',
+        location: { name: "Lipan Point", lat: 36.0328, lng: -111.8524 }
+      },
+      {
+        time: "11:30 AM",
+        title: "Desert View Drive: Navajo Point",
+        description: "Highest point on the South Rim.",
+        type: 'activity',
+        location: { name: "Navajo Point", lat: 36.0361, lng: -111.8344 }
+      },
+      {
+        time: "12:00 PM",
+        title: "Desert View Watchtower",
+        description: "Historic 70-foot stone tower.",
+        type: 'activity',
+        location: { name: "Desert View Watchtower", lat: 36.0412, lng: -111.8268 }
       },
       {
         time: "01:00 PM",
@@ -195,13 +225,15 @@ export const FLIGHT_DETAILS = {
     number: "PD 641",
     from: "YYZ (09:30 AM)",
     to: "PHX (11:04 AM)",
-    date: "May 14, 2026"
+    date: "May 14, 2026",
+    confirmation: "PRT-77291X"
   },
   return: {
     number: "PD 642",
     from: "PHX (12:05 PM)",
     to: "YYZ (07:19 PM)",
-    date: "May 19, 2026"
+    date: "May 19, 2026",
+    confirmation: "PRT-77291X"
   }
 };
 
@@ -210,5 +242,6 @@ export const RENTAL_DETAILS = {
   car: "Hyundai Kona (Compact SUV)",
   pickup: "May 14, 12:00 PM @ PHX",
   dropoff: "May 19, 12:00 PM @ PHX",
-  phone: "844-370-9817"
+  phone: "844-370-9817",
+  confirmation: "ALM-992104B"
 };
