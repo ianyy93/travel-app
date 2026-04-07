@@ -23,9 +23,25 @@ import {
   Trash2,
   Save,
   X,
-  LogIn
+  LogIn,
+  Bus,
+  Sparkles,
+  Send,
+  Loader2,
+  Search,
+  Eye,
+  EyeOff
 } from 'lucide-react';
-import { ITINERARY_DATA, FLIGHT_DETAILS, RENTAL_DETAILS, GAS_STATIONS, DayPlan, Activity } from './constants';
+import { 
+  ITINERARY_DATA, 
+  FLIGHT_DETAILS, 
+  RENTAL_DETAILS, 
+  GAS_STATIONS, 
+  DayPlan, 
+  TripEvent,
+  TripCategory,
+  Location
+} from './constants';
 import { cn } from './lib/utils';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
@@ -85,29 +101,49 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 // --- Components ---
 
-const getAppleMapsUrl = (loc: { lat: number, lng: number, name: string }) => 
-  `http://maps.apple.com/?daddr=${loc.lat},${loc.lng}&t=m`;
+const getAppleMapsUrl = (loc: Location) => 
+  `http://maps.apple.com/?q=${encodeURIComponent(loc.name)}&ll=${loc.lat},${loc.lng}`;
 
-const getGoogleMapsUrl = (loc: { lat: number, lng: number, name: string }) => 
-  `https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}&travelmode=driving`;
+const getGoogleMapsUrl = (loc: Location) => 
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`;
 
-const getDayRouteUrl = (locations: any[], provider: 'apple' | 'google') => {
-  if (locations.length === 0) return null;
+const getDayRouteUrl = (events: TripEvent[], provider: 'apple' | 'google') => {
+  // Collect all unique locations for the day (excluding flights and hidden events)
+  const locations = events
+    .filter(e => e.category !== 'flight' && !e.hidden)
+    .flatMap(e => {
+      if (e.type === 'travel') return [e.origin, e.destination];
+      return [e.location];
+    })
+    .filter((loc): loc is Location => !!loc);
+
+  if (locations.length < 2) return null;
   
+  // Remove sequential duplicates
+  const uniquePoints: Location[] = [];
+  locations.forEach((loc) => {
+    if (uniquePoints.length === 0 || 
+        uniquePoints[uniquePoints.length - 1].lat !== loc.lat || 
+        uniquePoints[uniquePoints.length - 1].lng !== loc.lng) {
+      uniquePoints.push(loc);
+    }
+  });
+
+  if (uniquePoints.length < 2) return null;
+
+  const origin = uniquePoints[0];
+  const destination = uniquePoints[uniquePoints.length - 1];
+  const waypoints = uniquePoints.slice(1, -1);
+
   if (provider === 'apple') {
-    let url = "http://maps.apple.com/?dirflg=d&saddr=Current+Location";
-    const destination = locations[locations.length - 1];
-    const waypoints = locations.slice(0, -1);
-    
-    url += `&daddr=${destination.lat},${destination.lng}`;
+    let url = `http://maps.apple.com/?saddr=${origin.lat},${origin.lng}&daddr=${destination.lat},${destination.lng}&dirflg=d`;
     if (waypoints.length > 0) {
       url += `&to=${waypoints.map(w => `${w.lat},${w.lng}`).join("&to=")}`;
     }
     return url;
   } else {
-    const destination = `${locations[locations.length - 1].lat},${locations[locations.length - 1].lng}`;
-    const waypoints = locations.slice(0, -1).map(w => `${w.lat},${w.lng}`).join('|');
-    return `https://www.google.com/maps/dir/?api=1&origin=Current+Location&destination=${destination}${waypoints ? `&waypoints=${waypoints}` : ''}&travelmode=driving`;
+    const waypointsStr = waypoints.map(w => encodeURIComponent(w.name)).join('|');
+    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.name)}&destination=${encodeURIComponent(destination.name)}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=driving`;
   }
 };
 
@@ -204,13 +240,15 @@ const GasPricesView = ({ userLoc }: { userLoc: [number, number] | null }) => {
   );
 };
 
-const ActivityIcon = ({ type }: { type: Activity['type'] }) => {
-  switch (type) {
+const EventIcon = ({ category }: { category: TripCategory }) => {
+  switch (category) {
     case 'flight': return <Plane className="w-4 h-4" />;
     case 'drive': return <Car className="w-4 h-4" />;
     case 'stay': return <Moon className="w-4 h-4" />;
-    case 'activity': return <Sun className="w-4 h-4" />;
-    default: return <MapPin className="w-4 h-4" />;
+    case 'food': return <Fuel className="w-4 h-4" />;
+    case 'walk': return <MapPin className="w-4 h-4" />;
+    case 'transit': return <Bus className="w-4 h-4" />;
+    default: return <Sun className="w-4 h-4" />;
   }
 };
 
@@ -220,22 +258,44 @@ const EditActivityModal = ({
   onClose,
   onDelete
 }: { 
-  activity: Activity; 
-  onSave: (updated: Activity) => void; 
+  activity: Partial<TripEvent>; 
+  onSave: (updated: TripEvent) => void; 
   onClose: () => void;
   onDelete?: () => void;
 }) => {
-  const [edited, setEdited] = useState<Activity>({ ...activity });
+  const [edited, setEdited] = useState<Partial<TripEvent>>({ ...activity });
+
+  const handleLocationChange = (field: keyof Location, value: string | number) => {
+    const currentLoc = edited.location || { name: '', lat: 0, lng: 0 };
+    setEdited({
+      ...edited,
+      location: {
+        ...currentLoc,
+        [field]: field === 'lat' || field === 'lng' ? parseFloat(value as string) || 0 : value
+      }
+    });
+  };
+
+  const handleTravelLocationChange = (type: 'origin' | 'destination', field: keyof Location, value: string | number) => {
+    const currentLoc = edited[type] || { name: '', lat: 0, lng: 0 };
+    setEdited({
+      ...edited,
+      [type]: {
+        ...currentLoc,
+        [field]: field === 'lat' || field === 'lng' ? parseFloat(value as string) || 0 : value
+      }
+    });
+  };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-4">
       <motion.div 
         initial={{ y: 100 }}
         animate={{ y: 0 }}
-        className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+        className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
       >
         <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xl font-bold text-slate-900">{onDelete ? 'Edit Activity' : 'Add Activity'}</h3>
+          <h3 className="text-xl font-bold text-slate-900">{onDelete ? 'Edit Event' : 'Add Event'}</h3>
           <button onClick={onClose} className="p-2 bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
         </div>
 
@@ -244,22 +304,120 @@ const EditActivityModal = ({
             <label className="text-[10px] font-bold text-slate-400 uppercase">Title</label>
             <input 
               type="text" 
-              value={edited.title}
+              value={edited.title || ''}
               onChange={e => setEdited({ ...edited, title: e.target.value })}
               className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
+
+          {edited.type === 'activity' ? (
+            <div className="space-y-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+              <p className="text-[10px] font-bold text-slate-400 uppercase">Location Details</p>
+              <div>
+                <input 
+                  type="text" 
+                  placeholder="Location Name"
+                  value={edited.location?.name || ''}
+                  onChange={e => handleLocationChange('name', e.target.value)}
+                  className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input 
+                  type="number" 
+                  placeholder="Latitude"
+                  value={edited.location?.lat || ''}
+                  onChange={e => handleLocationChange('lat', e.target.value)}
+                  className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                />
+                <input 
+                  type="number" 
+                  placeholder="Longitude"
+                  value={edited.location?.lng || ''}
+                  onChange={e => handleLocationChange('lng', e.target.value)}
+                  className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Origin</p>
+                <input 
+                  type="text" 
+                  placeholder="Name"
+                  value={edited.origin?.name || ''}
+                  onChange={e => handleTravelLocationChange('origin', 'name', e.target.value)}
+                  className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input 
+                    type="number" 
+                    placeholder="Lat"
+                    value={edited.origin?.lat || ''}
+                    onChange={e => handleTravelLocationChange('origin', 'lat', e.target.value)}
+                    className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                  />
+                  <input 
+                    type="number" 
+                    placeholder="Lng"
+                    value={edited.origin?.lng || ''}
+                    onChange={e => handleTravelLocationChange('origin', 'lng', e.target.value)}
+                    className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                  />
+                </div>
+              </div>
+              <div className="space-y-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Destination</p>
+                <input 
+                  type="text" 
+                  placeholder="Name"
+                  value={edited.destination?.name || ''}
+                  onChange={e => handleTravelLocationChange('destination', 'name', e.target.value)}
+                  className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <input 
+                    type="number" 
+                    placeholder="Lat"
+                    value={edited.destination?.lat || ''}
+                    onChange={e => handleTravelLocationChange('destination', 'lat', e.target.value)}
+                    className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                  />
+                  <input 
+                    type="number" 
+                    placeholder="Lng"
+                    value={edited.destination?.lng || ''}
+                    onChange={e => handleTravelLocationChange('destination', 'lng', e.target.value)}
+                    className="w-full p-2 bg-white rounded-lg border border-slate-100 text-sm outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase">Time</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Start Time</label>
               <input 
                 type="text" 
-                value={edited.time || ''}
-                onChange={e => setEdited({ ...edited, time: e.target.value })}
+                value={edited.startTime || ''}
+                onChange={e => setEdited({ ...edited, startTime: e.target.value })}
                 placeholder="e.g. 09:30 AM"
                 className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">End Time</label>
+              <input 
+                type="text" 
+                value={edited.endTime || ''}
+                onChange={e => setEdited({ ...edited, endTime: e.target.value })}
+                placeholder="e.g. 11:00 AM"
+                className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase">Type</label>
               <select 
@@ -268,12 +426,25 @@ const EditActivityModal = ({
                 className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
               >
                 <option value="activity">Activity</option>
-                <option value="drive">Drive</option>
-                <option value="flight">Flight</option>
-                <option value="stay">Stay</option>
-                <option value="food">Food</option>
+                <option value="travel">Travel</option>
               </select>
             </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase">Category</label>
+            <select 
+              value={edited.category}
+              onChange={e => setEdited({ ...edited, category: e.target.value as any })}
+              className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+            >
+              <option value="activity">Activity</option>
+              <option value="drive">Drive</option>
+              <option value="flight">Flight</option>
+              <option value="stay">Stay</option>
+              <option value="food">Food</option>
+              <option value="walk">Walk</option>
+              <option value="transit">Transit</option>
+            </select>
           </div>
           <div>
             <label className="text-[10px] font-bold text-slate-400 uppercase">Description</label>
@@ -295,7 +466,7 @@ const EditActivityModal = ({
             </button>
           )}
           <button 
-            onClick={() => onSave(edited)}
+            onClick={() => onSave(edited as TripEvent)}
             className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-200"
           >
             <Save className="w-5 h-5" /> Save Changes
@@ -317,6 +488,115 @@ export default function App() {
   const [editingActivity, setEditingActivity] = useState<{ dayIdx: number, actIdx: number | null } | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
+  
+  const handleSelectSuggestion = (dayId: number, eventId: string, suggestion: Location) => {
+    setItinerary(prev => prev.map(day => {
+      if (day.id !== dayId) return day;
+      
+      const newEvents = day.events.map((event, idx) => {
+        if (event.id === eventId) {
+          // Toggle selection: if clicking the same one, unselect it
+          const isSelected = event.location?.name === suggestion.name;
+          return { ...event, location: isSelected ? undefined : suggestion };
+        }
+        // Update origin of next travel event if it follows this meal
+        const prevEvent = day.events[idx - 1];
+        if (prevEvent && prevEvent.id === eventId && event.type === 'travel') {
+          const isSelected = prevEvent.location?.name === suggestion.name;
+          // If we just unselected, we need to find the previous location
+          if (isSelected) {
+            // Find the last location before this meal
+            let lastLoc: Location | undefined;
+            for (let i = idx - 2; i >= 0; i--) {
+              const e = day.events[i];
+              if (e.location) { lastLoc = e.location; break; }
+              if (e.destination) { lastLoc = e.destination; break; }
+            }
+            return { ...event, origin: lastLoc };
+          }
+          return { ...event, origin: suggestion };
+        }
+        return event;
+      });
+
+      return { ...day, events: newEvents };
+    }));
+  };
+
+  const handleAddManualSuggestion = (dayId: number, eventId: string) => {
+    const name = window.prompt("Enter restaurant name:");
+    if (!name) return;
+    const lat = parseFloat(window.prompt("Enter latitude:") || "0");
+    const lng = parseFloat(window.prompt("Enter longitude:") || "0");
+    const description = window.prompt("Enter short description (optional):") || "";
+
+    const newSuggestion: Location = { name, lat, lng, description };
+
+    setItinerary(prev => prev.map(day => {
+      if (day.id !== dayId) return day;
+      return {
+        ...day,
+        events: day.events.map(e => {
+          if (e.id === eventId) {
+            return { ...e, suggestions: [...(e.suggestions || []), newSuggestion] };
+          }
+          return e;
+        })
+      };
+    }));
+
+    handleSelectSuggestion(dayId, eventId, newSuggestion);
+  };
+
+  const handleToggleHide = (dayId: number, eventId: string) => {
+    setItinerary(prev => prev.map(day => {
+      if (day.id !== dayId) return day;
+      
+      const newEvents = day.events.map((event, idx) => {
+        if (event.id === eventId) {
+          return { ...event, hidden: !event.hidden };
+        }
+        return event;
+      });
+
+      // After toggling, we need to fix the travel origins/destinations
+      // to skip over hidden events
+      const fixedEvents = newEvents.map((event, idx) => {
+        if (event.type !== 'travel') return event;
+
+        let newOrigin = event.origin;
+        let newDestination = event.destination;
+
+        // If the origin is a hidden event, find the previous non-hidden location
+        const prevEvent = newEvents[idx - 1];
+        if (prevEvent && prevEvent.hidden) {
+          for (let i = idx - 1; i >= 0; i--) {
+            const e = newEvents[i];
+            if (!e.hidden) {
+              if (e.location) { newOrigin = e.location; break; }
+              if (e.destination) { newOrigin = e.destination; break; }
+            }
+          }
+        }
+
+        // If the destination is a hidden event, find the next non-hidden location
+        const nextEvent = newEvents[idx + 1];
+        if (nextEvent && nextEvent.hidden) {
+          for (let i = idx + 1; i < newEvents.length; i++) {
+            const e = newEvents[i];
+            if (!e.hidden) {
+              if (e.location) { newDestination = e.location; break; }
+              if (e.origin) { newDestination = e.origin; break; }
+            }
+          }
+        }
+
+        return { ...event, origin: newOrigin, destination: newDestination };
+      });
+
+      return { ...day, events: fixedEvents };
+    }));
+  };
 
   // Update current time for position indicator
   useEffect(() => {
@@ -389,14 +669,14 @@ export default function App() {
     }
   };
 
-  const handleUpdateActivity = (updated: Activity) => {
+  const handleUpdateActivity = (updated: TripEvent) => {
     if (!editingActivity) return;
     const { dayIdx, actIdx } = editingActivity;
     const newItinerary = [...itinerary];
     if (actIdx === null) {
-      newItinerary[dayIdx].activities.push(updated);
+      newItinerary[dayIdx].events.push(updated);
     } else {
-      newItinerary[dayIdx].activities[actIdx] = updated;
+      newItinerary[dayIdx].events[actIdx] = updated;
     }
     setItinerary(newItinerary);
     saveToFirebase(newItinerary);
@@ -407,7 +687,7 @@ export default function App() {
     if (!editingActivity || editingActivity.actIdx === null) return;
     const { dayIdx, actIdx } = editingActivity;
     const newItinerary = [...itinerary];
-    newItinerary[dayIdx].activities.splice(actIdx, 1);
+    newItinerary[dayIdx].events.splice(actIdx, 1);
     setItinerary(newItinerary);
     saveToFirebase(newItinerary);
     setEditingActivity(null);
@@ -415,28 +695,44 @@ export default function App() {
 
   const activeDay = itinerary[activeDayIdx];
 
-  const dayLocations = useMemo(() => {
-    return activeDay.activities
-      .filter(a => a.location)
-      .map(a => a.location);
-  }, [activeDay]);
-
-  // Check if an activity is "current"
-  const isCurrentActivity = (activity: Activity) => {
-    if (!activity.time) return false;
-    // For demo purposes, we'll check if the date matches May 14-19, 2026
-    // In a real app, we'd parse the activity.time and compare with currentTime
-    // Since the trip is in the future, we'll just mock this logic
+  // Check if an event is "current"
+  const isCurrentEvent = (event: TripEvent) => {
+    if (!event.startTime) return false;
+    
     const tripYear = 2026;
-    const tripMonth = 4; // May
+    const tripMonth = 4; // May (0-indexed is 4)
     const day = parseInt(activeDay.date.split(' ')[1]);
     
-    if (currentTime.getFullYear() === tripYear && currentTime.getMonth() === tripMonth && currentTime.getDate() === day) {
-      // Very simple mock: if it's the right day, highlight the first activity for now
-      // A more robust version would parse "09:30 AM" and compare
-      return true;
+    // Check if it's the right day
+    if (currentTime.getFullYear() !== tripYear || currentTime.getMonth() !== tripMonth || currentTime.getDate() !== day) {
+      return false;
     }
-    return false;
+
+    const parseTime = (timeStr: string) => {
+      const [time, modifier] = timeStr.split(' ');
+      let [hours, minutes] = time.split(':').map(Number);
+      if (modifier === 'PM' && hours < 12) hours += 12;
+      if (modifier === 'AM' && hours === 12) hours = 0;
+      const d = new Date(currentTime);
+      d.setHours(hours, minutes, 0, 0);
+      return d;
+    };
+
+    try {
+      const start = parseTime(event.startTime);
+      const now = currentTime;
+      
+      if (event.endTime) {
+        const end = parseTime(event.endTime);
+        return now >= start && now <= end;
+      } else {
+        // If no end time, assume it's current for 1 hour
+        const end = new Date(start.getTime() + 60 * 60 * 1000);
+        return now >= start && now <= end;
+      }
+    } catch (e) {
+      return false;
+    }
   };
 
   return (
@@ -502,7 +798,7 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                   <a 
-                    href={getDayRouteUrl(dayLocations, 'apple') || '#'} 
+                    href={getDayRouteUrl(activeDay.events, 'apple') || '#'} 
                     target="_blank" 
                     rel="noreferrer"
                     className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
@@ -511,7 +807,7 @@ export default function App() {
                     <Navigation className="w-4 h-4" />
                   </a>
                   <a 
-                    href={getDayRouteUrl(dayLocations, 'google') || '#'} 
+                    href={getDayRouteUrl(activeDay.events, 'google') || '#'} 
                     target="_blank" 
                     rel="noreferrer"
                     className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
@@ -526,11 +822,106 @@ export default function App() {
                 {/* Timeline Line */}
                 <div className="absolute left-[19px] top-4 bottom-4 w-0.5 bg-slate-100" />
 
-                <div className="space-y-6">
-                  {activeDay.activities.map((activity, idx) => {
-                    const isCurrent = isCurrentActivity(activity) && idx === 0; // Simplified for demo
+                <div className="space-y-4">
+                  {activeDay.events.map((event, idx) => {
+                    const isCurrent = isCurrentEvent(event);
+                    
+                    if (event.type === 'travel') {
+                      if (event.hidden) return null;
+                      return (
+                        <div key={event.id} className="relative pl-10 py-2">
+                          <div className={cn(
+                            "absolute left-0 top-1/2 -translate-y-1/2 w-10 flex justify-center z-10 transition-all",
+                            isCurrent && "scale-110"
+                          )}>
+                            <div className={cn(
+                              "p-1 rounded-full border transition-all",
+                              isCurrent ? "bg-blue-600 border-blue-400 shadow-lg shadow-blue-100" : "bg-slate-50 border-slate-100"
+                            )}>
+                              <div className={isCurrent ? "text-white" : "text-slate-400"}>
+                                <EventIcon category={event.category} />
+                              </div>
+                            </div>
+                          </div>
+                          <div className={cn(
+                            "flex items-center justify-between rounded-xl p-3 border border-dashed transition-all",
+                            isCurrent ? "bg-blue-50/50 border-blue-200 ring-1 ring-blue-100" : "bg-slate-50/50 border-slate-200"
+                          )}>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                  <span>{event.origin?.name}</span>
+                                  <ArrowRight className="w-3 h-3" />
+                                  <span>{event.destination?.name}</span>
+                                </div>
+                                <div className="flex items-center justify-between mt-1">
+                                  <h5 className="text-xs font-bold text-slate-600">{event.title}</h5>
+                                  {(event.startTime || event.endTime) && (
+                                    <span className="text-[9px] font-medium text-slate-400 flex items-center gap-1">
+                                      <Clock className="w-2.5 h-2.5" />
+                                      {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                {event.description && (
+                                  <p className="text-[10px] text-slate-400 mt-0.5">
+                                    {event.description.split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
+                                      part.match(/^https?:\/\//) ? (
+                                        <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+                                          {part}
+                                        </a>
+                                      ) : part
+                                    )}
+                                  </p>
+                                )}
+                              </div>
+                            {event.origin && event.destination && (
+                              <div className="flex gap-1 ml-2">
+                                <a 
+                                  href={(() => {
+                                    const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
+                                    let url = `http://maps.apple.com/?saddr=${event.origin.lat},${event.origin.lng}&daddr=${event.destination.lat},${event.destination.lng}&dirflg=${mode}`;
+                                    if (event.waypoints && event.waypoints.length > 0) {
+                                      url += `&to=${event.waypoints.map(w => `${w.lat},${w.lng}`).join("&to=")}`;
+                                    }
+                                    return url;
+                                  })()}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                                  title="Apple Maps Directions"
+                                >
+                                  <Navigation className="w-3 h-3" />
+                                </a>
+                                <a 
+                                  href={(() => {
+                                    const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
+                                    const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
+                                    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin.name)}&destination=${encodeURIComponent(event.destination.name)}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
+                                  })()}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                                  title="Google Maps Directions"
+                                >
+                                  <MapIcon className="w-3 h-3" />
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                          {isEditing && (
+                            <button 
+                              onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: idx })}
+                              className="absolute -top-1 -right-1 p-1.5 bg-blue-600 text-white rounded-full shadow-lg z-20"
+                            >
+                              <Edit2 className="w-2.5 h-2.5" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    }
+
                     return (
-                      <div key={idx} className="relative pl-10 group">
+                      <div key={event.id} className="relative pl-10 group">
                         {/* Timeline Dot */}
                         <div className={cn(
                           "absolute left-0 top-5 w-10 h-10 -ml-[1px] rounded-full border-4 border-white z-10 flex items-center justify-center transition-all",
@@ -548,44 +939,71 @@ export default function App() {
 
                         <div className={cn(
                           "bg-white p-4 rounded-2xl border shadow-sm transition-all",
-                          isCurrent ? "border-blue-100 ring-1 ring-blue-50" : "border-slate-100"
+                          isCurrent ? "border-blue-100 ring-1 ring-blue-50" : "border-slate-100",
+                          event.hidden && "opacity-50 grayscale"
                         )}>
                           <div className="flex items-start gap-3">
                             <div className={cn(
                               "mt-1 p-2 rounded-xl shrink-0",
-                              activity.type === 'flight' ? "bg-purple-50 text-purple-600" :
-                              activity.type === 'drive' ? "bg-orange-50 text-orange-600" :
-                              activity.type === 'stay' ? "bg-indigo-50 text-indigo-600" :
+                              event.category === 'flight' ? "bg-purple-50 text-purple-600" :
+                              event.category === 'drive' ? "bg-orange-50 text-orange-600" :
+                              event.category === 'stay' ? "bg-indigo-50 text-indigo-600" :
                               "bg-emerald-50 text-emerald-600"
                             )}>
-                              <ActivityIcon type={activity.type} />
+                              <EventIcon category={event.category} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between gap-2">
-                                <h4 className="text-sm font-bold text-slate-800 truncate">
-                                  {activity.title}
-                                </h4>
-                                {activity.time && (
-                                  <span className="text-[10px] font-medium text-slate-400 shrink-0 flex items-center gap-1">
-                                    <Clock className="w-3 h-3" /> {activity.time}
-                                  </span>
-                                )}
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <h4 className={cn(
+                                    "text-sm font-bold text-slate-800 truncate",
+                                    event.hidden && "line-through"
+                                  )}>
+                                    {event.title}
+                                  </h4>
+                                  {event.hidden && (
+                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200">
+                                      Cancelled
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {(event.startTime || event.endTime) && (
+                                    <span className="text-[10px] font-medium text-slate-400 flex items-center gap-1">
+                                      <Clock className="w-3 h-3" /> 
+                                      {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
+                                    </span>
+                                  )}
+                                  <button 
+                                    onClick={() => handleToggleHide(activeDay.id, event.id)}
+                                    className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                                    title={event.hidden ? "Show activity" : "Hide/Cancel activity"}
+                                  >
+                                    {event.hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                                  </button>
+                                </div>
                               </div>
                               
-                              {activity.description && (
+                              {event.description && (
                                 <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                  {activity.description}
+                                  {event.description.split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
+                                    part.match(/^https?:\/\//) ? (
+                                      <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+                                        {part}
+                                      </a>
+                                    ) : part
+                                  )}
                                 </p>
                               )}
 
-                              {activity.location && (
+                              {event.location && (
                                 <div className="mt-3 pt-3 border-t border-slate-50 flex items-center justify-between">
                                   <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
-                                    <MapPin className="w-3 h-3" /> {activity.location.name}
+                                    <MapPin className="w-3 h-3" /> {event.location.name}
                                   </span>
                                   <div className="flex gap-2">
                                     <a 
-                                      href={getAppleMapsUrl(activity.location)} 
+                                      href={getAppleMapsUrl(event.location)} 
                                       target="_blank" 
                                       rel="noreferrer"
                                       className="p-1.5 bg-slate-50 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
@@ -593,7 +1011,7 @@ export default function App() {
                                       <Navigation className="w-3 h-3" />
                                     </a>
                                     <a 
-                                      href={getGoogleMapsUrl(activity.location)} 
+                                      href={getGoogleMapsUrl(event.location)} 
                                       target="_blank" 
                                       rel="noreferrer"
                                       className="p-1.5 bg-slate-50 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
@@ -604,9 +1022,63 @@ export default function App() {
                                 </div>
                               )}
 
-                              {activity.description?.toLowerCase().includes('dog') && (
+                              {event.description?.toLowerCase().includes('dog') && (
                                 <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 text-[8px] font-black uppercase rounded-full">
                                   <Dog className="w-2 h-2" /> Dog Friendly
+                                </div>
+                              )}
+
+                              {event.suggestions && (
+                                <div className="mt-4 space-y-2">
+                                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Suggestions</p>
+                                  <div className="grid grid-cols-1 gap-2">
+                                    {event.suggestions.map((sug, sIdx) => (
+                                      <button
+                                        key={sIdx}
+                                        onClick={() => handleSelectSuggestion(activeDay.id, event.id, sug)}
+                                        className={cn(
+                                          "text-left p-2.5 rounded-xl border transition-all",
+                                          event.location?.name === sug.name 
+                                            ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-100' 
+                                            : 'bg-slate-50 border-slate-100 hover:border-slate-200'
+                                        )}
+                                      >
+                                        <div className="flex justify-between items-start">
+                                          <span className="text-xs font-bold text-slate-700">{sug.name}</span>
+                                          <div className="flex gap-1">
+                                            <a 
+                                              href={getGoogleMapsUrl(sug)}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="p-1 text-slate-400 hover:text-blue-600"
+                                            >
+                                              <ExternalLink className="w-3 h-3" />
+                                            </a>
+                                          </div>
+                                        </div>
+                                        {sug.description && (
+                                          <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{sug.description}</p>
+                                        )}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <a 
+                                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.title)}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="flex-1 py-2 border border-dashed border-slate-200 rounded-xl text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:border-blue-200 hover:text-blue-500 transition-all flex items-center justify-center gap-1"
+                                    >
+                                      <MapIcon className="w-3 h-3" /> Search on Google Maps
+                                    </a>
+                                    <button 
+                                      onClick={() => handleAddManualSuggestion(activeDay.id, event.id)}
+                                      className="px-3 py-2 border border-dashed border-slate-200 rounded-xl text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:border-blue-200 hover:text-blue-500 transition-all flex items-center justify-center gap-1"
+                                    >
+                                      <Plus className="w-3 h-3" /> Add Manual
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -630,7 +1102,7 @@ export default function App() {
                         onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: null })}
                         className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 flex items-center justify-center gap-2 font-bold hover:border-blue-400 hover:text-blue-500 transition-colors"
                       >
-                        <Plus className="w-5 h-5" /> Add Activity
+                        <Plus className="w-5 h-5" /> Add Event
                       </button>
                     </div>
                   )}
@@ -723,8 +1195,8 @@ export default function App() {
       {editingActivity && (
         <EditActivityModal 
           activity={editingActivity.actIdx !== null 
-            ? itinerary[editingActivity.dayIdx].activities[editingActivity.actIdx] 
-            : { title: '', type: 'activity', description: '', time: '' }
+            ? itinerary[editingActivity.dayIdx].events[editingActivity.actIdx] 
+            : { title: '', type: 'activity', category: 'activity', description: '', startTime: '', endTime: '' }
           }
           onSave={handleUpdateActivity}
           onClose={() => setEditingActivity(null)}

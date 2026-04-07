@@ -5,57 +5,128 @@ export interface Location {
   description?: string;
 }
 
-export interface Activity {
-  time?: string;
+export type TripEventType = 'activity' | 'travel';
+export type TripCategory = 'flight' | 'drive' | 'stay' | 'activity' | 'food' | 'walk' | 'transit';
+
+export interface TripEvent {
+  id: string;
+  type: TripEventType;
+  category: TripCategory;
+  startTime?: string;
+  endTime?: string;
   title: string;
   description?: string;
-  location?: Location;
-  type: 'flight' | 'drive' | 'stay' | 'activity' | 'food';
+  location?: Location; // For activity
+  origin?: Location; // For travel
+  destination?: Location; // For travel
+  waypoints?: Location[]; // For multi-stop travel
+  suggestions?: Location[]; // For meal/activity options
+  hidden?: boolean; // For cancelling/hiding events
 }
 
 export interface DayPlan {
   date: string;
   title: string;
-  activities: Activity[];
+  events: TripEvent[];
 }
 
 export const ITINERARY_DATA: DayPlan[] = [
   {
     date: "May 14",
     title: "Arrival & Grand Canyon Drive",
-    activities: [
+    events: [
       {
-        time: "09:30 AM",
+        id: "14-1",
+        type: 'activity',
+        category: 'flight',
+        startTime: "09:30 AM",
+        endTime: "11:04 AM",
         title: "Flight YYZ → PHX",
-        description: "Porter PD 641. Arrive at 11:04 AM (Terminal 3).",
-        type: 'flight',
+        description: "Porter PD 641. Terminal 3.",
         location: { name: "Phoenix Sky Harbor International Airport", lat: 33.4342, lng: -112.0081 }
       },
       {
-        time: "12:00 PM",
+        id: "14-2",
+        type: 'travel',
+        category: 'transit',
+        startTime: "11:15 AM",
+        endTime: "11:45 AM",
+        title: "Shuttle to Rental Center",
+        description: "Pick up: Outside baggage claim at Terminal 3 (Level 1). Drop off: Rental Car Center. Shuttle runs every 5-10 mins. More info: https://www.skyharbor.com/parking-transportation/rental-cars/",
+        origin: { name: "Phoenix Sky Harbor International Airport", lat: 33.4342, lng: -112.0081 },
+        destination: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 }
+      },
+      {
+        id: "14-3",
+        type: 'activity',
+        category: 'drive',
+        startTime: "12:00 PM",
+        endTime: "12:30 PM",
         title: "Pick up Rental Car",
-        description: "Alamo (Hyundai Kona or similar). Sky Harbor Intl. Airport.",
-        type: 'drive',
+        description: "Alamo (Hyundai Kona or similar).",
         location: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 }
       },
       {
-        time: "01:00 PM",
-        title: "Drive to Grand Canyon",
-        description: "Approx. 4 hours drive to South Rim.",
-        type: 'drive',
-        location: { name: "Grand Canyon South Rim Entrance", lat: 35.9899, lng: -112.1211 }
+        id: "14-3b",
+        type: 'activity',
+        category: 'food',
+        startTime: "12:30 PM",
+        endTime: "01:15 PM",
+        title: "Quick Lunch",
+        description: "To-go or drive-through options near the airport for a fast start.",
+        suggestions: [
+          { name: "In-N-Out Burger", lat: 33.4594, lng: -112.0294, description: "Classic drive-through. Very close to the rental center." },
+          { name: "Raising Cane's Chicken Fingers", lat: 33.4485, lng: -111.9261, description: "Fast and reliable drive-through on the way out." },
+          { name: "Chipotle Mexican Grill (Online Order)", lat: 33.4515, lng: -112.0740, description: "Quick to-go pickup near the airport." }
+        ]
       },
       {
-        time: "06:30 PM",
-        title: "Sunset at Mather Point",
-        description: "Short Rim Trail walk. Dog-friendly.",
+        id: "14-4",
+        type: 'travel',
+        category: 'drive',
+        startTime: "01:15 PM",
+        endTime: "05:15 PM",
+        title: "Drive to Grand Canyon",
+        description: "Approx. 4 hours drive north. Parking Tip: Aim for Visitor Center Parking Lot 1 or 4 for easiest access to Mather Point.",
+        origin: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 },
+        destination: { name: "Grand Canyon South Rim Entrance", lat: 35.9899, lng: -112.1211 }
+      },
+      {
+        id: "14-5",
         type: 'activity',
+        category: 'activity',
+        startTime: "06:30 PM",
+        endTime: "07:30 PM",
+        title: "Sunset at Mather Point",
+        description: "Short Rim Trail walk. Parking: Use Visitor Center Parking Lot 1 (closest) or Lot 4. Dog-friendly area.",
         location: { name: "Mather Point", lat: 36.0617, lng: -112.1077 }
       },
       {
+        id: "14-6",
+        type: 'travel',
+        category: 'drive',
+        startTime: "07:45 PM",
+        endTime: "08:15 PM",
+        title: "Drive to Camp",
+        origin: { name: "Mather Point", lat: 36.0617, lng: -112.1077 },
+        destination: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 }
+      },
+      {
+        id: "14-7",
+        type: 'activity',
+        category: 'food',
+        startTime: "08:30 PM",
+        title: "Dinner at Camp",
+        description: "On-site dining at Under Canvas. Seasonal, locally sourced menu. S'mores by the fire afterwards.",
+        location: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 }
+      },
+      {
+        id: "14-8",
+        type: 'activity',
+        category: 'stay',
+        startTime: "09:30 PM",
         title: "Stay: Under Canvas Grand Canyon",
         description: "Glamping experience near the South Rim.",
-        type: 'stay',
         location: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 }
       }
     ]
@@ -63,60 +134,180 @@ export const ITINERARY_DATA: DayPlan[] = [
   {
     date: "May 15",
     title: "Grand Canyon Exploration",
-    activities: [
+    events: [
       {
-        time: "06:30 AM",
-        title: "Early Entry & Rim Trail",
-        description: "Mather → Yavapai → Village. Avoid midday heat.",
+        id: "15-0",
         type: 'activity',
-        location: { name: "Grand Canyon Village", lat: 36.0544, lng: -112.1401 }
+        category: 'activity',
+        startTime: "06:00 AM",
+        endTime: "07:00 AM",
+        title: "Slow Morning at Camp",
+        description: "Coffee + relax. Take photos around the tent and enjoy the morning scenery.",
+        location: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 }
       },
       {
-        time: "10:00 AM",
-        title: "Desert View Drive: Grandview Point",
-        description: "First major stop on Desert View Drive.",
+        id: "15-0b",
+        type: 'travel',
+        category: 'drive',
+        startTime: "07:00 AM",
+        endTime: "07:30 AM",
+        title: "Drive to Park",
+        description: "Head to Visitor Center parking. Check for availability in Lot 1 or 4.",
+        origin: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 },
+        destination: { name: "Grand Canyon Visitor Center Parking", lat: 36.0591, lng: -112.1093 }
+      },
+      {
+        id: "15-1",
+        type: 'travel',
+        category: 'walk',
+        startTime: "07:30 AM",
+        endTime: "11:30 AM",
+        title: "Rim Trail Walk",
+        description: "Visitor Center Parking → Mather Point → Yavapai Point → Back to Visitor Center. Dog-friendly trail.",
+        origin: { name: "Grand Canyon Visitor Center Parking", lat: 36.0591, lng: -112.1093 },
+        destination: { name: "Grand Canyon Visitor Center Parking", lat: 36.0591, lng: -112.1093 },
+        waypoints: [
+          { name: "Mather Point", lat: 36.0617, lng: -112.1077 },
+          { name: "Yavapai Point", lat: 36.0661, lng: -112.1173 }
+        ]
+      },
+      {
+        id: "15-11b",
         type: 'activity',
+        category: 'food',
+        startTime: "11:30 AM",
+        endTime: "12:30 PM",
+        title: "Picnic Lunch",
+        description: "Select your lunch spot. Canyon Village is a backtrack, while Cameron is on the way to Scottsdale.",
+        suggestions: [
+          { name: "Cameron Trading Post Restaurant", lat: 35.8754, lng: -111.4124, description: "4.4★ • Famous Navajo Tacos. Perfect stop on the way to Scottsdale (East Exit)." },
+          { name: "El Tovar Dining Room (To-Go)", lat: 36.0577, lng: -112.1351, description: "4.5★ • Historic lodge. Grab high-quality sandwiches for a rim-side picnic." },
+          { name: "Canyon Village Market & Deli", lat: 36.0544, lng: -112.1401, description: "4.2★ • Most convenient for a quick grab-and-go before heading East." }
+        ]
+      },
+      {
+        id: "15-2",
+        type: 'travel',
+        category: 'drive',
+        startTime: "12:30 PM",
+        endTime: "12:45 PM",
+        title: "Desert View Drive",
+        origin: { name: "Grand Canyon Visitor Center Parking", lat: 36.0591, lng: -112.1093 },
+        destination: { name: "Grandview Point", lat: 35.9984, lng: -111.9872 }
+      },
+      {
+        id: "15-3",
+        type: 'activity',
+        category: 'activity',
+        startTime: "12:45 PM",
+        endTime: "01:00 PM",
+        title: "Grandview Point",
         location: { name: "Grandview Point", lat: 35.9984, lng: -111.9872 }
       },
       {
-        time: "10:30 AM",
-        title: "Desert View Drive: Moran Point",
-        description: "Great views of the Colorado River.",
+        id: "15-4",
+        type: 'travel',
+        category: 'drive',
+        startTime: "01:00 PM",
+        endTime: "01:10 PM",
+        title: "Drive to Moran Point",
+        origin: { name: "Grandview Point", lat: 35.9984, lng: -111.9872 },
+        destination: { name: "Moran Point", lat: 36.0048, lng: -111.9241 }
+      },
+      {
+        id: "15-5",
         type: 'activity',
+        category: 'activity',
+        startTime: "01:10 PM",
+        endTime: "01:25 PM",
+        title: "Moran Point",
         location: { name: "Moran Point", lat: 36.0048, lng: -111.9241 }
       },
       {
-        time: "11:00 AM",
-        title: "Desert View Drive: Lipan Point",
-        description: "One of the widest views of the canyon.",
+        id: "15-6",
+        type: 'travel',
+        category: 'drive',
+        startTime: "01:25 PM",
+        endTime: "01:35 PM",
+        title: "Drive to Lipan Point",
+        origin: { name: "Moran Point", lat: 36.0048, lng: -111.9241 },
+        destination: { name: "Lipan Point", lat: 36.0328, lng: -111.8524 }
+      },
+      {
+        id: "15-7",
         type: 'activity',
+        category: 'activity',
+        startTime: "01:35 PM",
+        endTime: "01:50 PM",
+        title: "Lipan Point",
         location: { name: "Lipan Point", lat: 36.0328, lng: -111.8524 }
       },
       {
-        time: "11:30 AM",
-        title: "Desert View Drive: Navajo Point",
-        description: "Highest point on the South Rim.",
+        id: "15-8",
+        type: 'travel',
+        category: 'drive',
+        startTime: "01:50 PM",
+        endTime: "02:00 PM",
+        title: "Drive to Navajo Point",
+        origin: { name: "Lipan Point", lat: 36.0328, lng: -111.8524 },
+        destination: { name: "Navajo Point", lat: 36.0361, lng: -111.8344 }
+      },
+      {
+        id: "15-9",
         type: 'activity',
+        category: 'activity',
+        startTime: "02:00 PM",
+        endTime: "02:15 PM",
+        title: "Navajo Point",
         location: { name: "Navajo Point", lat: 36.0361, lng: -111.8344 }
       },
       {
-        time: "12:00 PM",
-        title: "Desert View Watchtower",
-        description: "Historic 70-foot stone tower.",
+        id: "15-10",
+        type: 'travel',
+        category: 'drive',
+        startTime: "02:15 PM",
+        endTime: "02:25 PM",
+        title: "Drive to Watchtower",
+        origin: { name: "Navajo Point", lat: 36.0361, lng: -111.8344 },
+        destination: { name: "Desert View Watchtower", lat: 36.0412, lng: -111.8268 }
+      },
+      {
+        id: "15-11",
         type: 'activity',
+        category: 'activity',
+        startTime: "02:25 PM",
+        endTime: "03:00 PM",
+        title: "Desert View Watchtower",
+        description: "Large lot available at Desert View area.",
         location: { name: "Desert View Watchtower", lat: 36.0412, lng: -111.8268 }
       },
       {
-        time: "01:00 PM",
+        id: "15-12",
+        type: 'travel',
+        category: 'drive',
+        startTime: "03:00 PM",
+        endTime: "07:00 PM",
         title: "Drive to Scottsdale",
-        description: "Approx. 4 hours drive back south.",
-        type: 'drive',
-        location: { name: "Scottsdale", lat: 33.4942, lng: -111.9261 }
+        description: "Approx. 4 hours drive south.",
+        origin: { name: "Desert View Watchtower", lat: 36.0412, lng: -111.8268 },
+        destination: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
+        id: "15-12b",
+        type: 'activity',
+        category: 'food',
+        startTime: "07:30 PM",
+        title: "Dinner in Scottsdale",
+        description: "Try 'Proof' at the Four Seasons for an American canteen experience.",
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "15-13",
+        type: 'activity',
+        category: 'stay',
+        startTime: "08:30 PM",
         title: "Stay: Four Seasons Scottsdale",
         description: "Check-in at Troon North.",
-        type: 'stay',
         location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       }
     ]
@@ -124,32 +315,100 @@ export const ITINERARY_DATA: DayPlan[] = [
   {
     date: "May 16",
     title: "Scottsdale Relaxation",
-    activities: [
+    events: [
       {
-        time: "Morning",
-        title: "Pinnacle Peak Park",
-        description: "Hiking with the dog.",
+        id: "16-0",
         type: 'activity',
-        location: { name: "Pinnacle Peak Park", lat: 33.7275, lng: -111.8519 }
-      },
-      {
-        time: "Afternoon",
-        title: "Resort Time",
-        description: "Pool and spa at Four Seasons.",
-        type: 'activity',
+        category: 'food',
+        startTime: "08:00 AM",
+        title: "Breakfast at Resort",
+        description: "Relaxed breakfast at the Four Seasons.",
         location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
-        time: "Evening",
-        title: "Old Town Scottsdale",
-        description: "Exploring and dinner.",
+        id: "16-1",
         type: 'activity',
+        category: 'activity',
+        startTime: "09:00 AM",
+        endTime: "11:30 AM",
+        title: "Pinnacle Peak Park",
+        description: "Hiking with the dog. Parking: Dedicated lot at the trailhead.",
+        location: { name: "Pinnacle Peak Park", lat: 33.7275, lng: -111.8519 }
+      },
+      {
+        id: "16-2",
+        type: 'travel',
+        category: 'drive',
+        startTime: "11:30 AM",
+        endTime: "11:45 AM",
+        title: "Return to Resort",
+        origin: { name: "Pinnacle Peak Park", lat: 33.7275, lng: -111.8519 },
+        destination: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "16-2b",
+        type: 'activity',
+        category: 'food',
+        startTime: "12:30 PM",
+        title: "Poolside Lunch",
+        description: "Casual lunch by the pool at the resort.",
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "16-3",
+        type: 'activity',
+        category: 'activity',
+        startTime: "01:30 PM",
+        endTime: "05:00 PM",
+        title: "Resort Time",
+        description: "Pool and spa at Four Seasons.",
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "16-4",
+        type: 'travel',
+        category: 'drive',
+        startTime: "05:30 PM",
+        endTime: "06:00 PM",
+        title: "Drive to Old Town",
+        origin: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 },
+        destination: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 }
+      },
+      {
+        id: "16-5",
+        type: 'activity',
+        category: 'activity',
+        startTime: "06:00 PM",
+        endTime: "08:00 PM",
+        title: "Old Town Scottsdale",
+        description: "Exploring art galleries and shops. Parking: Multiple free public parking garages available.",
         location: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 }
       },
       {
+        id: "16-5b",
+        type: 'activity',
+        category: 'food',
+        startTime: "08:00 PM",
+        title: "Dinner in Old Town",
+        description: "Try 'The Mission' for modern Latin cuisine or 'Olive & Ivy' for Mediterranean.",
+        location: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 }
+      },
+      {
+        id: "16-6",
+        type: 'travel',
+        category: 'drive',
+        startTime: "09:30 PM",
+        endTime: "10:00 PM",
+        title: "Return to Resort",
+        origin: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 },
+        destination: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "16-7",
+        type: 'activity',
+        category: 'stay',
+        startTime: "10:30 PM",
         title: "Stay: Four Seasons Scottsdale",
-        description: "Troon North.",
-        type: 'stay',
         location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       }
     ]
@@ -157,30 +416,82 @@ export const ITINERARY_DATA: DayPlan[] = [
   {
     date: "May 17",
     title: "Sedona Day Trip",
-    activities: [
+    events: [
       {
-        time: "Early",
-        title: "Drive to Sedona",
-        description: "Approx. 2 hours drive.",
-        type: 'drive',
-        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
-      },
-      {
-        title: "Sedona Highlights",
-        description: "Cathedral Rock, Bell Rock, Chapel of the Holy Cross.",
+        id: "17-0",
         type: 'activity',
-        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
-      },
-      {
-        time: "Late PM",
-        title: "Return to Scottsdale",
-        type: 'drive',
+        category: 'food',
+        startTime: "07:00 AM",
+        title: "Early Breakfast",
+        description: "Quick bite before heading to Sedona.",
         location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
+        id: "17-2",
+        type: 'travel',
+        category: 'drive',
+        startTime: "08:00 AM",
+        endTime: "10:00 AM",
+        title: "Drive to Sedona",
+        description: "Approx. 2 hours drive.",
+        origin: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 },
+        destination: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
+      },
+      {
+        id: "17-3",
+        type: 'activity',
+        category: 'activity',
+        startTime: "10:00 AM",
+        endTime: "01:00 PM",
+        title: "Sedona Highlights",
+        description: "Cathedral Rock, Bell Rock. Parking: Sedona lots fill up early! Use the Sedona Shuttle if needed.",
+        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
+      },
+      {
+        id: "17-3b",
+        type: 'activity',
+        category: 'food',
+        startTime: "01:00 PM",
+        endTime: "02:00 PM",
+        title: "Lunch in Sedona",
+        description: "Try 'The Hudson' for great views or 'Elote Cafe' (if you can get a spot) for upscale Mexican.",
+        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
+      },
+      {
+        id: "17-3c",
+        type: 'activity',
+        category: 'activity',
+        startTime: "02:00 PM",
+        endTime: "04:30 PM",
+        title: "More Sedona",
+        description: "Chapel of the Holy Cross and Tlaquepaque Arts & Shopping Village.",
+        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
+      },
+      {
+        id: "17-4",
+        type: 'travel',
+        category: 'drive',
+        startTime: "04:30 PM",
+        endTime: "06:30 PM",
+        title: "Return to Scottsdale",
+        origin: { name: "Sedona", lat: 34.8697, lng: -111.7610 },
+        destination: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "17-4b",
+        type: 'activity',
+        category: 'food',
+        startTime: "07:30 PM",
+        title: "Dinner at Resort",
+        description: "Relaxing dinner after the day trip.",
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "17-5",
+        type: 'activity',
+        category: 'stay',
+        startTime: "08:30 PM",
         title: "Stay: Four Seasons Scottsdale",
-        description: "Troon North.",
-        type: 'stay',
         location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       }
     ]
@@ -188,17 +499,58 @@ export const ITINERARY_DATA: DayPlan[] = [
   {
     date: "May 18",
     title: "Final Relax",
-    activities: [
+    events: [
       {
-        title: "Relax at Four Seasons",
-        description: "Optional Scottsdale/Phoenix exploring.",
+        id: "18-0",
         type: 'activity',
+        category: 'food',
+        startTime: "09:00 AM",
+        title: "Leisurely Breakfast",
         location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
+        id: "18-1",
+        type: 'activity',
+        category: 'activity',
+        startTime: "10:00 AM",
+        endTime: "01:00 PM",
+        title: "Relax at Four Seasons",
+        description: "Pool time or short walk.",
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "18-1b",
+        type: 'activity',
+        category: 'food',
+        startTime: "01:00 PM",
+        title: "Lunch",
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "18-1c",
+        type: 'activity',
+        category: 'activity',
+        startTime: "02:00 PM",
+        endTime: "06:00 PM",
+        title: "Optional Exploring",
+        description: "Visit Taliesin West or Scottsdale Quarter.",
+        location: { name: "Scottsdale", lat: 33.4942, lng: -111.9261 }
+      },
+      {
+        id: "18-1d",
+        type: 'activity',
+        category: 'food',
+        startTime: "07:30 PM",
+        title: "Farewell Dinner",
+        description: "Celebrate the last night in Arizona.",
+        location: { name: "Scottsdale", lat: 33.4942, lng: -111.9261 }
+      },
+      {
+        id: "18-2",
+        type: 'activity',
+        category: 'stay',
+        startTime: "09:00 PM",
         title: "Stay: Four Seasons Scottsdale",
-        description: "Troon North.",
-        type: 'stay',
         location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       }
     ]
@@ -206,25 +558,71 @@ export const ITINERARY_DATA: DayPlan[] = [
   {
     date: "May 19",
     title: "Departure",
-    activities: [
+    events: [
       {
-        time: "09:30 AM",
-        title: "Depart Scottsdale",
-        type: 'drive',
+        id: "19-0",
+        type: 'activity',
+        category: 'food',
+        startTime: "08:00 AM",
+        title: "Final Breakfast",
         location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
       },
       {
-        time: "10:30 AM",
+        id: "19-1",
+        type: 'activity',
+        category: 'stay',
+        startTime: "09:30 AM",
+        endTime: "10:00 AM",
+        title: "Check out",
+        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+      },
+      {
+        id: "19-2",
+        type: 'travel',
+        category: 'drive',
+        startTime: "10:00 AM",
+        endTime: "10:30 AM",
+        title: "Drive to Airport",
+        origin: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 },
+        destination: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 }
+      },
+      {
+        id: "19-3",
+        type: 'activity',
+        category: 'drive',
+        startTime: "10:30 AM",
+        endTime: "11:00 AM",
         title: "Return Rental Car",
-        description: "Sky Harbor Intl. Airport.",
-        type: 'drive',
         location: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 }
       },
       {
-        time: "12:05 PM",
+        id: "19-4",
+        type: 'travel',
+        category: 'transit',
+        startTime: "11:15 AM",
+        endTime: "11:30 AM",
+        title: "Shuttle to Terminal",
+        description: "Pick up: Rental Car Center. Drop off: Terminal 3 (Porter Airlines). Shuttle runs every 5-10 mins. More info: https://www.skyharbor.com/parking-transportation/rental-cars/",
+        origin: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 },
+        destination: { name: "Phoenix Sky Harbor International Airport", lat: 33.4342, lng: -112.0081 }
+      },
+      {
+        id: "19-4b",
+        type: 'activity',
+        category: 'food',
+        startTime: "11:30 AM",
+        title: "Airport Snack",
+        description: "Grab a quick bite at Terminal 3 before the flight.",
+        location: { name: "PHX Airport", lat: 33.4342, lng: -112.0081 }
+      },
+      {
+        id: "19-5",
+        type: 'activity',
+        category: 'flight',
+        startTime: "12:05 PM",
+        endTime: "07:19 PM",
         title: "Flight PHX → YYZ",
-        description: "Porter PD 642. Arrive at 07:19 PM.",
-        type: 'flight',
+        description: "Porter PD 642.",
         location: { name: "Phoenix Sky Harbor International Airport", lat: 33.4342, lng: -112.0081 }
       }
     ]
