@@ -488,24 +488,36 @@ export default function App() {
   const [editingActivity, setEditingActivity] = useState<{ dayIdx: number, actIdx: number | null } | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
   
+  const saveToFirestore = async (data: DayPlan[]) => {
+    if (!auth.currentUser) return;
+    const path = 'trips/main';
+    const tripDoc = doc(db, 'trips', 'main');
+    try {
+      await setDoc(tripDoc, { 
+        days: data,
+        lastUpdated: new Date().toISOString(),
+        updatedBy: auth.currentUser.email
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, path);
+    }
+  };
+
   const handleSelectSuggestion = (dayId: number, eventId: string, suggestion: Location) => {
-    setItinerary(prev => prev.map(day => {
+    const newItinerary = itinerary.map(day => {
       if (day.id !== dayId) return day;
       
       const newEvents = day.events.map((event, idx) => {
         if (event.id === eventId) {
-          // Toggle selection: if clicking the same one, unselect it
           const isSelected = event.location?.name === suggestion.name;
           return { ...event, location: isSelected ? undefined : suggestion };
         }
-        // Update origin of next travel event if it follows this meal
         const prevEvent = day.events[idx - 1];
         if (prevEvent && prevEvent.id === eventId && event.type === 'travel') {
           const isSelected = prevEvent.location?.name === suggestion.name;
-          // If we just unselected, we need to find the previous location
           if (isSelected) {
-            // Find the last location before this meal
             let lastLoc: Location | undefined;
             for (let i = idx - 2; i >= 0; i--) {
               const e = day.events[i];
@@ -520,19 +532,52 @@ export default function App() {
       });
 
       return { ...day, events: newEvents };
-    }));
+    });
+    setItinerary(newItinerary);
+    saveToFirestore(newItinerary);
   };
 
   const handleAddManualSuggestion = (dayId: number, eventId: string) => {
-    const name = window.prompt("Enter restaurant name:");
-    if (!name) return;
-    const lat = parseFloat(window.prompt("Enter latitude:") || "0");
-    const lng = parseFloat(window.prompt("Enter longitude:") || "0");
-    const description = window.prompt("Enter short description (optional):") || "";
+    const url = window.prompt("Paste Google Maps link (or enter name):");
+    if (!url) return;
 
+    let name = url;
+    let lat = 0;
+    let lng = 0;
+
+    // Try to parse coordinates from URL
+    // Format 1: @lat,lng
+    const atMatch = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    // Format 2: !3dlat!4dlng
+    const bangMatch = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+
+    if (atMatch) {
+      lat = parseFloat(atMatch[1]);
+      lng = parseFloat(atMatch[2]);
+    } else if (bangMatch) {
+      lat = parseFloat(bangMatch[1]);
+      lng = parseFloat(bangMatch[2]);
+    }
+
+    // Try to parse name from URL (usually after /place/ and before /@)
+    const nameMatch = url.match(/\/place\/([^/]+)/);
+    if (nameMatch) {
+      name = decodeURIComponent(nameMatch[1].replace(/\+/g, ' '));
+    }
+
+    if (lat === 0 && lng === 0) {
+      // Fallback if no coordinates found in URL
+      const manualName = window.prompt("Could not find coordinates in link. Enter name manually:", name);
+      if (!manualName) return;
+      name = manualName;
+      lat = parseFloat(window.prompt("Enter latitude:") || "0");
+      lng = parseFloat(window.prompt("Enter longitude:") || "0");
+    }
+
+    const description = "Added via Google Maps link";
     const newSuggestion: Location = { name, lat, lng, description };
 
-    setItinerary(prev => prev.map(day => {
+    const updatedItinerary = itinerary.map(day => {
       if (day.id !== dayId) return day;
       return {
         ...day,
@@ -543,13 +588,29 @@ export default function App() {
           return e;
         })
       };
-    }));
+    });
 
-    handleSelectSuggestion(dayId, eventId, newSuggestion);
+    setItinerary(updatedItinerary);
+    // We'll trigger the selection after state update or just do it here
+    // To be safe and simple, let's just update the specific event in the new array
+    const finalItinerary = updatedItinerary.map(day => {
+      if (day.id !== dayId) return day;
+      return {
+        ...day,
+        events: day.events.map(e => {
+          if (e.id === eventId) {
+            return { ...e, location: newSuggestion };
+          }
+          return e;
+        })
+      };
+    });
+    setItinerary(finalItinerary);
+    saveToFirestore(finalItinerary);
   };
 
   const handleToggleHide = (dayId: number, eventId: string) => {
-    setItinerary(prev => prev.map(day => {
+    const newItinerary = itinerary.map(day => {
       if (day.id !== dayId) return day;
       
       const newEvents = day.events.map((event, idx) => {
@@ -559,15 +620,12 @@ export default function App() {
         return event;
       });
 
-      // After toggling, we need to fix the travel origins/destinations
-      // to skip over hidden events
       const fixedEvents = newEvents.map((event, idx) => {
         if (event.type !== 'travel') return event;
 
         let newOrigin = event.origin;
         let newDestination = event.destination;
 
-        // If the origin is a hidden event, find the previous non-hidden location
         const prevEvent = newEvents[idx - 1];
         if (prevEvent && prevEvent.hidden) {
           for (let i = idx - 1; i >= 0; i--) {
@@ -579,7 +637,6 @@ export default function App() {
           }
         }
 
-        // If the destination is a hidden event, find the next non-hidden location
         const nextEvent = newEvents[idx + 1];
         if (nextEvent && nextEvent.hidden) {
           for (let i = idx + 1; i < newEvents.length; i++) {
@@ -595,7 +652,9 @@ export default function App() {
       });
 
       return { ...day, events: fixedEvents };
-    }));
+    });
+    setItinerary(newItinerary);
+    saveToFirestore(newItinerary);
   };
 
   // Update current time for position indicator
@@ -643,29 +702,34 @@ export default function App() {
   }, []);
 
   const handleLogin = async () => {
+    setLoginError(null);
     const provider = new GoogleAuthProvider();
     try {
+      // On mobile/iframe, popups are often blocked or fail.
+      // We try popup first as it's better for the AI Studio preview.
       await signInWithPopup(auth, provider);
     } catch (err: any) {
+      console.error("Login failed", err);
+      
       if (err.code === 'auth/popup-closed-by-user') {
-        console.log("User closed the login popup.");
         return;
       }
-      console.error("Login failed", err);
-    }
-  };
 
-  const saveToFirebase = async (newItinerary: DayPlan[]) => {
-    if (!user) return;
-    const path = 'trips/main';
-    try {
-      await setDoc(doc(db, 'trips', 'main'), { 
-        days: newItinerary,
-        lastUpdated: new Date().toISOString(),
-        updatedBy: user.email
-      });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, path);
+      let message = "Login failed. ";
+      if (err.code === 'auth/operation-not-allowed') {
+        message += "Google login is not enabled in Firebase Console.";
+      } else if (err.code === 'auth/unauthorized-domain') {
+        message += "This domain is not authorized in Firebase Console.";
+      } else if (err.code === 'auth/invalid-api-key') {
+        message += "Invalid Firebase API key. Check your configuration.";
+      } else {
+        message += err.message;
+      }
+      
+      setLoginError(message);
+      
+      // If popup fails, we could try redirect, but it's risky in an iframe.
+      // Instead, we'll just show the error and suggest opening in a new tab.
     }
   };
 
@@ -674,12 +738,12 @@ export default function App() {
     const { dayIdx, actIdx } = editingActivity;
     const newItinerary = [...itinerary];
     if (actIdx === null) {
-      newItinerary[dayIdx].events.push(updated);
+      newItinerary[dayIdx].events.push({ ...updated, id: Math.random().toString(36).substr(2, 9) });
     } else {
       newItinerary[dayIdx].events[actIdx] = updated;
     }
     setItinerary(newItinerary);
-    saveToFirebase(newItinerary);
+    saveToFirestore(newItinerary);
     setEditingActivity(null);
   };
 
@@ -689,7 +753,7 @@ export default function App() {
     const newItinerary = [...itinerary];
     newItinerary[dayIdx].events.splice(actIdx, 1);
     setItinerary(newItinerary);
-    saveToFirebase(newItinerary);
+    saveToFirestore(newItinerary);
     setEditingActivity(null);
   };
 
@@ -780,7 +844,26 @@ export default function App() {
             </button>
           ))}
         </div>
-      </header>      {/* Content */}
+
+        {loginError && (
+          <div className="mt-2 p-3 bg-red-50 border border-red-100 rounded-xl flex items-center gap-2 text-red-600 text-[10px] font-medium">
+            <InfoIcon className="w-3 h-3 shrink-0" />
+            <div className="flex-1">
+              {loginError}
+              <button 
+                onClick={() => window.open(window.location.href, '_blank')}
+                className="block mt-1 font-black underline uppercase"
+              >
+                Try opening in a new tab
+              </button>
+            </div>
+            <button onClick={() => setLoginError(null)} className="p-1 hover:bg-red-100 rounded">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+      </header>
+      {/* Content */}
       <main className="flex-1 overflow-y-auto scrollbar-hide">
         <AnimatePresence mode="wait">
           {activeTab === 'itinerary' && (
@@ -1076,7 +1159,7 @@ export default function App() {
                                       onClick={() => handleAddManualSuggestion(activeDay.id, event.id)}
                                       className="px-3 py-2 border border-dashed border-slate-200 rounded-xl text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:border-blue-200 hover:text-blue-500 transition-all flex items-center justify-center gap-1"
                                     >
-                                      <Plus className="w-3 h-3" /> Add Manual
+                                      <Plus className="w-3 h-3" /> Add via Link
                                     </button>
                                   </div>
                                 </div>
