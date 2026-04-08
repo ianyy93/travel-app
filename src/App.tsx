@@ -31,7 +31,16 @@ import {
   Search,
   Eye,
   EyeOff,
-  Utensils
+  Utensils,
+  LogOut,
+  ChevronDown,
+  Briefcase,
+  Undo,
+  Check,
+  Wand2,
+  MessageSquare,
+  MapIcon,
+  Navigation
 } from 'lucide-react';
 import { 
   ITINERARY_DATA, 
@@ -45,18 +54,20 @@ import {
 } from './constants';
 import { cn } from './lib/utils';
 import { db, auth } from './firebase';
-import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, collection } from 'firebase/firestore';
 import { 
   signInWithPopup, 
   signInWithRedirect, 
   getRedirectResult, 
   GoogleAuthProvider, 
   onAuthStateChanged, 
-  User 
+  User,
+  signOut
 } from 'firebase/auth';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { Fuel, Navigation, Map as MapIcon, Share2, Info as InfoIcon } from 'lucide-react';
+import { geminiService, GeminiProposal } from './services/geminiService';
+import { Fuel, Share2, Info as InfoIcon } from 'lucide-react';
 
 // Fix Leaflet icon issues
 // @ts-ignore
@@ -438,21 +449,38 @@ const EditActivityModal = ({
               </select>
             </div>
           </div>
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase">Category</label>
-            <select 
-              value={edited.category}
-              onChange={e => setEdited({ ...edited, category: e.target.value as any })}
-              className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
-            >
-              <option value="activity">Activity</option>
-              <option value="drive">Drive</option>
-              <option value="flight">Flight</option>
-              <option value="stay">Stay</option>
-              <option value="food">Food</option>
-              <option value="walk">Walk</option>
-              <option value="transit">Transit</option>
-            </select>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Category</label>
+              <select 
+                value={edited.category}
+                onChange={e => setEdited({ ...edited, category: e.target.value as any })}
+                className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="activity">Activity</option>
+                <option value="drive">Drive</option>
+                <option value="flight">Flight</option>
+                <option value="stay">Stay</option>
+                <option value="food">Food</option>
+                <option value="walk">Walk</option>
+                <option value="transit">Transit</option>
+              </select>
+            </div>
+            <div className="flex flex-col">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Status</label>
+              <button
+                onClick={() => setEdited({ ...edited, hidden: !edited.hidden })}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 p-3 rounded-xl border transition-all font-bold text-xs",
+                  edited.hidden 
+                    ? "bg-red-50 border-red-100 text-red-600" 
+                    : "bg-emerald-50 border-emerald-100 text-emerald-600"
+                )}
+              >
+                {edited.hidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {edited.hidden ? "Cancelled" : "Active"}
+              </button>
+            </div>
           </div>
           <div>
             <label className="text-[10px] font-bold text-slate-400 uppercase">Description</label>
@@ -497,19 +525,69 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [view, setView] = useState<'itinerary' | 'list'>('itinerary');
+  const [currentTripId, setCurrentTripId] = useState<string>('main');
+  const [tripsList, setTripsList] = useState<{id: string, title: string, date: string}[]>([]);
+  const [tripTitle, setTripTitle] = useState('Arizona 2026');
+  const [tripDates, setTripDates] = useState('May 14 - May 21');
+  const [itineraryHistory, setItineraryHistory] = useState<DayPlan[][]>([]);
+  const [aiProposal, setAiProposal] = useState<GeminiProposal | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [showAiAssistant, setShowAiAssistant] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+
+  const isAdmin = useMemo(() => {
+    const admins = ['ianyy93@gmail.com', 'wingin.carrie@gmail.com'];
+    return user && admins.includes(user.email || '');
+  }, [user]);
   
-  const saveToFirestore = async (data: DayPlan[]) => {
+  const handleUndo = () => {
+    if (itineraryHistory.length === 0) return;
+    const previous = itineraryHistory[itineraryHistory.length - 1];
+    setItinerary(previous);
+    setItineraryHistory(prev => prev.slice(0, -1));
+    saveToFirestore(previous);
+  };
+
+  const handleAiAction = async () => {
+    if (!aiPrompt.trim()) return;
+    setIsAiLoading(true);
+    try {
+      const pastTripsSummary = tripsList.map(t => `${t.title} (${t.date})`).join(', ');
+      const proposal = await geminiService.proposeChanges(itinerary, aiPrompt, pastTripsSummary);
+      setAiProposal(proposal);
+      setAiPrompt('');
+    } catch (err) {
+      console.error(err);
+      alert("AI Assistant failed to generate a proposal. Please try again.");
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  const applyAiProposal = () => {
+    if (!aiProposal) return;
+    setItineraryHistory(prev => [...prev, itinerary]);
+    setItinerary(aiProposal.itinerary);
+    saveToFirestore(aiProposal.itinerary);
+    setAiProposal(null);
+    setShowAiAssistant(false);
+  };
+
+  const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string) => {
     if (!auth.currentUser) return;
-    const isAdmin = auth.currentUser.email === 'ianyy93@gmail.com';
     if (!isAdmin) {
-      console.error("Unauthorized: Only ianyy93@gmail.com can save changes.");
+      console.error("Unauthorized: You do not have permission to save changes.");
       return;
     }
-    const path = 'trips/main';
-    const tripDoc = doc(db, 'trips', 'main');
+    const path = `trips/${currentTripId}`;
+    const tripDoc = doc(db, 'trips', currentTripId);
     try {
       await setDoc(tripDoc, { 
         days: data,
+        title: title || tripTitle,
+        dates: dates || tripDates,
         lastUpdated: new Date().toISOString(),
         updatedBy: auth.currentUser.email
       });
@@ -622,34 +700,25 @@ export default function App() {
     saveToFirestore(finalItinerary);
   };
 
-  const handleToggleHide = (dayId: number, eventId: string) => {
-    const newItinerary = itinerary.map(day => {
-      if (day.id !== dayId) return day;
+  const handleToggleHide = (dayIdx: number, eventId: string) => {
+    const newItinerary = itinerary.map((day, dIdx) => {
+      if (dIdx !== dayIdx) return day;
       
-      const newEvents = day.events.map((event, idx) => {
+      const newEvents = day.events.map((event) => {
         if (event.id === eventId) {
           return { ...event, hidden: !event.hidden };
         }
         return event;
       });
 
+      // Update travel events to skip hidden activities
       const fixedEvents = newEvents.map((event, idx) => {
         if (event.type !== 'travel') return event;
 
         let newOrigin = event.origin;
         let newDestination = event.destination;
 
-        const prevEvent = newEvents[idx - 1];
-        if (prevEvent && prevEvent.hidden) {
-          for (let i = idx - 1; i >= 0; i--) {
-            const e = newEvents[i];
-            if (!e.hidden) {
-              if (e.location) { newOrigin = e.location; break; }
-              if (e.destination) { newOrigin = e.destination; break; }
-            }
-          }
-        }
-
+        // If the activity this travel leads to is hidden, find the next visible one
         const nextEvent = newEvents[idx + 1];
         if (nextEvent && nextEvent.hidden) {
           for (let i = idx + 1; i < newEvents.length; i++) {
@@ -661,6 +730,21 @@ export default function App() {
           }
         }
 
+        // If the activity this travel comes from is hidden, find the previous visible one
+        const prevEvent = newEvents[idx - 1];
+        if (prevEvent && prevEvent.hidden) {
+          for (let i = idx - 1; i >= 0; i--) {
+            const e = newEvents[i];
+            if (!e.hidden) {
+              if (e.location) { newOrigin = e.location; break; }
+              if (e.destination) { newOrigin = e.destination; break; }
+            }
+          }
+        }
+
+        // If either the origin or destination activity is hidden and we couldn't find a replacement,
+        // or if this travel event itself is now redundant, we might want to hide it.
+        // For now, we just update the coordinates.
         return { ...event, origin: newOrigin, destination: newDestination };
       });
 
@@ -694,17 +778,22 @@ export default function App() {
       setLoginError("Redirect login failed: " + err.message);
     });
 
-    const path = 'trips/main';
-    const tripDoc = doc(db, 'trips', 'main');
+    const path = `trips/${currentTripId}`;
+    const tripDoc = doc(db, 'trips', currentTripId);
     
     const unsubscribeSync = onSnapshot(tripDoc, (snapshot) => {
       if (snapshot.exists()) {
-        setItinerary(snapshot.data().days);
-      } else {
-        // Only initialize if we have a user, otherwise we'll get permission denied on write
-        if (auth.currentUser) {
+        const data = snapshot.data();
+        setItinerary(data.days);
+        setTripTitle(data.title || 'Arizona 2026');
+        setTripDates(data.dates || 'May 14 - May 21');
+      } else if (currentTripId === 'main') {
+        // Only initialize if we have a user and they are an admin
+        if (auth.currentUser && isAdmin) {
           setDoc(tripDoc, { 
             days: ITINERARY_DATA,
+            title: 'Arizona 2026',
+            dates: 'May 14 - May 21',
             lastUpdated: new Date().toISOString(),
             updatedBy: auth.currentUser.email
           }).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
@@ -718,7 +807,26 @@ export default function App() {
       unsubscribeAuth();
       unsubscribeSync();
     };
-  }, []);
+  }, [currentTripId, isAdmin]);
+
+  // Fetch all trips
+  useEffect(() => {
+    if (!user) return;
+    
+    const tripsCollection = collection(db, 'trips');
+    const unsubscribe = onSnapshot(tripsCollection, (snapshot) => {
+      const trips = snapshot.docs.map(doc => ({
+        id: doc.id,
+        title: doc.data().title || doc.data().days?.[0]?.title || 'Untitled Trip',
+        date: doc.data().dates || doc.data().days?.[0]?.date || 'No Date'
+      }));
+      setTripsList(trips);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'trips');
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const handleLogin = async (method: 'popup' | 'redirect' = 'popup') => {
     setLoginError(null);
@@ -761,6 +869,16 @@ export default function App() {
       }
       
       setLoginError(message);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      setShowUserMenu(false);
+      setIsEditing(false);
+    } catch (err) {
+      console.error("Logout failed", err);
     }
   };
 
@@ -844,50 +962,215 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto h-[100dvh] bg-slate-50 flex flex-col font-sans shadow-2xl overflow-hidden relative">
+      {/* AI Assistant Panel */}
+      <AnimatePresence>
+        {showAiAssistant && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-24 left-4 right-4 bg-white rounded-3xl shadow-2xl border border-slate-100 z-50 overflow-hidden flex flex-col max-h-[60vh]"
+          >
+            <div className="p-4 bg-blue-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5" />
+                <span className="font-bold">Magic Itinerary Assistant</span>
+              </div>
+              <button onClick={() => setShowAiAssistant(false)} className="p-1 hover:bg-blue-500 rounded-lg transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {aiProposal ? (
+                <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100">
+                  <h3 className="font-bold text-blue-900 mb-2 flex items-center gap-2">
+                    <Wand2 className="w-4 h-4" />
+                    Proposed Changes
+                  </h3>
+                  <p className="text-sm text-blue-800 mb-4 italic">"{aiProposal.explanation}"</p>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={applyAiProposal}
+                      className="flex-1 bg-blue-600 text-white py-2 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
+                    >
+                      <Check className="w-4 h-4" /> Apply
+                    </button>
+                    <button 
+                      onClick={() => setAiProposal(null)}
+                      className="flex-1 bg-white text-slate-600 py-2 rounded-xl font-bold border border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors"
+                    >
+                      <X className="w-4 h-4" /> Discard
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-4">
+                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <MessageSquare className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <p className="text-sm text-slate-500">
+                    Tell me what you want to change. I can add activities, optimize routes, or build a plan from scratch!
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50">
+              <div className="relative">
+                <textarea 
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="e.g., 'Add a nice dinner spot on Day 1' or 'Make Day 2 more relaxing'"
+                  className="w-full bg-white border border-slate-200 rounded-2xl p-3 pr-12 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none h-20"
+                  disabled={isAiLoading}
+                />
+                <button 
+                  onClick={handleAiAction}
+                  disabled={isAiLoading || !aiPrompt.trim()}
+                  className="absolute right-2 bottom-2 p-2 bg-blue-600 text-white rounded-xl disabled:opacity-50 disabled:bg-slate-400 transition-all hover:scale-105 active:scale-95"
+                >
+                  {isAiLoading ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Sparkles className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <header className="px-6 pt-6 pb-4 bg-white border-b border-slate-100 shrink-0 z-40">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Arizona 2026</h1>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+            {view === 'list' ? 'My Trips' : (
+              isEditing ? (
+                <input 
+                  type="text"
+                  value={tripTitle}
+                  onChange={(e) => {
+                    setTripTitle(e.target.value);
+                    saveToFirestore(itinerary, e.target.value, tripDates);
+                  }}
+                  className="bg-transparent border-none p-0 focus:ring-0 w-full"
+                />
+              ) : tripTitle
+            )}
+          </h1>
           <div className="flex items-center gap-2">
-            {user ? (
+            {view === 'itinerary' && isAdmin && (
               <button 
-                onClick={() => setIsEditing(!isEditing)}
+                onClick={() => setShowAiAssistant(!showAiAssistant)}
                 className={cn(
-                  "p-2 rounded-full transition-colors",
-                  isEditing ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+                  "p-2 rounded-full transition-all",
+                  showAiAssistant ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600"
                 )}
+                title="AI Assistant"
               >
-                <Edit2 className="w-4 h-4" />
+                <Sparkles className="w-5 h-5" />
               </button>
+            )}
+            {itineraryHistory.length > 0 && view === 'itinerary' && isAdmin && (
+              <button 
+                onClick={handleUndo}
+                className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-orange-50 hover:text-orange-600 transition-all"
+                title="Undo last change"
+              >
+                <Undo className="w-5 h-5" />
+              </button>
+            )}
+            {user ? (
+              <div className="relative">
+                <button 
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center gap-2 p-1 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors"
+                >
+                  {user.photoURL ? (
+                    <img 
+                      src={user.photoURL} 
+                      alt={user.displayName || 'User'} 
+                      className="w-7 h-7 rounded-full border border-white"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-white text-[10px] font-bold">
+                      {user.email?.[0].toUpperCase()}
+                    </div>
+                  )}
+                  <ChevronDown className={cn("w-3 h-3 text-slate-400 transition-transform", showUserMenu && "rotate-180")} />
+                </button>
+
+                <AnimatePresence>
+                  {showUserMenu && (
+                    <>
+                      <div 
+                        className="fixed inset-0 z-40" 
+                        onClick={() => setShowUserMenu(false)} 
+                      />
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-slate-100 py-2 z-50 overflow-hidden"
+                      >
+                        <div className="px-4 py-2 border-b border-slate-50 mb-1">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Account</p>
+                          <p className="text-xs font-bold text-slate-700 truncate">{user.email}</p>
+                        </div>
+                        
+                        {isAdmin && (
+                          <button 
+                            onClick={() => {
+                              setIsEditing(!isEditing);
+                              setShowUserMenu(false);
+                            }}
+                            className={cn(
+                              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors",
+                              isEditing ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:bg-slate-50"
+                            )}
+                          >
+                            <Edit2 className="w-4 h-4" />
+                            {isEditing ? "Stop Editing" : "Enable Editing"}
+                          </button>
+                        )}
+
+                        <button 
+                          onClick={() => {
+                            setView(view === 'list' ? 'itinerary' : 'list');
+                            setShowUserMenu(false);
+                          }}
+                          className={cn(
+                            "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors",
+                            view === 'list' ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:bg-slate-50"
+                          )}
+                        >
+                          <Briefcase className="w-4 h-4" />
+                          {view === 'list' ? "Back to Itinerary" : "View all my trips"}
+                        </button>
+
+                        <button 
+                          onClick={handleLogout}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors border-t border-slate-50 mt-1"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          Log off
+                        </button>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
             ) : (
-              <button onClick={handleLogin} className="p-2 bg-blue-50 text-blue-600 rounded-full">
+              <button onClick={() => handleLogin()} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors">
                 <LogIn className="w-4 h-4" />
               </button>
             )}
-            <div className="p-2 bg-blue-50 rounded-full">
-              <Dog className="w-4 h-4 text-blue-600" />
-            </div>
           </div>
         </div>
         
-        {/* Day Tabs */}
-        <div className="flex gap-2 overflow-x-auto scrollbar-hide py-2">
-          {itinerary.map((day, i) => (
-            <button
-              key={i}
-              onClick={() => setActiveDayIdx(i)}
-              className={cn(
-                "flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold transition-all",
-                activeDayIdx === i 
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105" 
-                  : "bg-slate-100 text-slate-500"
-              )}
-            >
-              {day.date}
-            </button>
-          ))}
-        </div>
-
         {loginError && (
           <div className="mt-2 p-3 bg-red-50 border border-red-100 rounded-xl flex flex-col gap-2 text-red-600 text-[10px] font-medium">
             <div className="flex items-center gap-2">
@@ -920,9 +1203,107 @@ export default function App() {
             </div>
           </div>
         )}
+        {view === 'itinerary' && (
+          <div className="mt-1">
+            {isEditing ? (
+              <input 
+                type="text"
+                value={tripDates}
+                onChange={(e) => {
+                  setTripDates(e.target.value);
+                  saveToFirestore(itinerary, tripTitle, e.target.value);
+                }}
+                className="text-xs font-bold text-blue-600 bg-transparent border-none p-0 focus:ring-0 w-full"
+              />
+            ) : (
+              <p className="text-xs font-bold text-blue-600 uppercase tracking-wider">{tripDates}</p>
+            )}
+          </div>
+        )}
       </header>
-      {/* Content */}
-      <main className="flex-1 overflow-y-auto scrollbar-hide">
+
+      {view === 'list' ? (
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-black text-slate-400 uppercase tracking-wider">Your Adventures</h2>
+            {isAdmin && (
+              <button 
+                onClick={() => {
+                  const id = prompt("Enter a unique ID for the new trip (e.g. japan-2027):");
+                  if (id) {
+                    setCurrentTripId(id);
+                    setView('itinerary');
+                  }
+                }}
+                className="p-2 bg-blue-600 text-white rounded-full shadow-lg"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          
+          {tripsList.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
+              <p className="text-slate-400 text-sm">No trips found. Create your first one!</p>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {tripsList.map(trip => (
+                <button
+                  key={trip.id}
+                  onClick={() => {
+                    setCurrentTripId(trip.id);
+                    setView('itinerary');
+                  }}
+                  className={cn(
+                    "w-full text-left p-5 rounded-3xl border transition-all group",
+                    currentTripId === trip.id 
+                      ? "bg-blue-600 border-blue-500 text-white shadow-xl shadow-blue-100" 
+                      : "bg-white border-slate-100 hover:border-blue-200 text-slate-900"
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className={cn(
+                        "text-[10px] font-black uppercase tracking-tighter mb-1",
+                        currentTripId === trip.id ? "text-blue-200" : "text-slate-400"
+                      )}>
+                        {trip.date}
+                      </p>
+                      <h3 className="text-lg font-black tracking-tight leading-tight">{trip.title}</h3>
+                    </div>
+                    <ChevronRight className={cn(
+                      "w-5 h-5 transition-transform group-hover:translate-x-1",
+                      currentTripId === trip.id ? "text-blue-200" : "text-slate-300"
+                    )} />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Day Tabs */}
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide py-2 px-6">
+          {itinerary.map((day, i) => (
+            <button
+              key={i}
+              onClick={() => setActiveDayIdx(i)}
+              className={cn(
+                "flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold transition-all",
+                activeDayIdx === i 
+                  ? "bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105" 
+                  : "bg-slate-100 text-slate-500"
+              )}
+            >
+              {day.date}
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <main className="flex-1 overflow-y-auto scrollbar-hide">
         <AnimatePresence mode="wait">
           {activeTab === 'itinerary' && (
             <motion.div 
@@ -934,8 +1315,36 @@ export default function App() {
             >
               <div className="mb-6 flex justify-between items-start">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-900">{activeDay.title}</h2>
-                  <p className="text-sm text-slate-500">Day {activeDayIdx + 1} • {activeDay.date}</p>
+                  {isEditing ? (
+                    <input 
+                      type="text"
+                      value={activeDay.title}
+                      onChange={(e) => {
+                        const newItinerary = [...itinerary];
+                        newItinerary[activeDayIdx].title = e.target.value;
+                        setItinerary(newItinerary);
+                        saveToFirestore(newItinerary);
+                      }}
+                      className="text-xl font-bold text-slate-900 bg-transparent border-none p-0 focus:ring-0 w-full"
+                    />
+                  ) : (
+                    <h2 className="text-xl font-bold text-slate-900">{activeDay.title}</h2>
+                  )}
+                  {isEditing ? (
+                    <input 
+                      type="text"
+                      value={activeDay.date}
+                      onChange={(e) => {
+                        const newItinerary = [...itinerary];
+                        newItinerary[activeDayIdx].date = e.target.value;
+                        setItinerary(newItinerary);
+                        saveToFirestore(newItinerary);
+                      }}
+                      className="text-sm text-slate-500 bg-transparent border-none p-0 focus:ring-0 w-full"
+                    />
+                  ) : (
+                    <p className="text-sm text-slate-500">Day {activeDayIdx + 1} • {activeDay.date}</p>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <a 
@@ -1116,15 +1525,16 @@ export default function App() {
                                       {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
                                     </span>
                                   )}
-                                  {user?.email === 'ianyy93@gmail.com' && (
-                                    <button 
-                                      onClick={() => handleToggleHide(activeDay.id, event.id)}
-                                      className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                                      title={event.hidden ? "Show activity" : "Hide/Cancel activity"}
-                                    >
-                                      {event.hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                                    </button>
-                                  )}
+                                  <button 
+                                    onClick={() => handleToggleHide(activeDayIdx, event.id)}
+                                    className={cn(
+                                      "p-1 transition-colors",
+                                      event.hidden ? "text-red-500 hover:text-red-600" : "text-slate-400 hover:text-blue-600"
+                                    )}
+                                    title={event.hidden ? "Show activity" : "Hide/Cancel activity"}
+                                  >
+                                    {event.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  </button>
                                 </div>
                               </div>
                               
@@ -1336,6 +1746,8 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+    </>
+  )}
 
       {/* Modals */}
       {editingActivity && (

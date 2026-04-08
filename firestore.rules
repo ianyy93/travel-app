@@ -11,12 +11,12 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.email == "ianyy93@gmail.com";
+      return isAuthenticated() && (request.auth.token.email == "ianyy93@gmail.com" || request.auth.token.email == "wingin.carrie@gmail.com");
     }
 
-    match /trips/main {
-      // Allow anyone to view the itinerary, but only authenticated users can edit
-      allow read: if true;
+    match /trips/{tripId} {
+      // Allow anyone to view public trips, but only admins can edit
+      allow get, list: if true;
       allow write: if isAdmin() && isValidItinerary(request.resource.data);
     }
     

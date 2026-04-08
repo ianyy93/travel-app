@@ -5,6 +5,8 @@
       "description": "The travel itinerary data",
       "type": "object",
       "properties": {
+        "title": { "type": "string" },
+        "dates": { "type": "string" },
         "days": {
           "type": "array",
           "items": {
@@ -59,9 +61,9 @@
     }
   },
   "firestore": {
-    "/trips/main": {
+    "/trips/{tripId}": {
       "schema": "itinerary",
-      "description": "The main shared trip itinerary"
+      "description": "A shared trip itinerary"
     }
   }
 }
