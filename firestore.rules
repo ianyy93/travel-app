@@ -10,10 +10,14 @@ service cloud.firestore {
       return data.days is list;
     }
 
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.email == "ianyy93@gmail.com";
+    }
+
     match /trips/main {
       // Allow anyone to view the itinerary, but only authenticated users can edit
       allow read: if true;
-      allow write: if isAuthenticated() && isValidItinerary(request.resource.data);
+      allow write: if isAdmin() && isValidItinerary(request.resource.data);
     }
     
     match /users/{userId} {
