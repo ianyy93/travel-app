@@ -30,7 +30,8 @@ import {
   Loader2,
   Search,
   Eye,
-  EyeOff
+  EyeOff,
+  Utensils
 } from 'lucide-react';
 import { 
   ITINERARY_DATA, 
@@ -252,7 +253,7 @@ const EventIcon = ({ category }: { category: TripCategory }) => {
     case 'flight': return <Plane className="w-4 h-4" />;
     case 'drive': return <Car className="w-4 h-4" />;
     case 'stay': return <Moon className="w-4 h-4" />;
-    case 'food': return <Fuel className="w-4 h-4" />;
+    case 'food': return <Utensils className="w-4 h-4" />;
     case 'walk': return <MapPin className="w-4 h-4" />;
     case 'transit': return <Bus className="w-4 h-4" />;
     default: return <Sun className="w-4 h-4" />;
@@ -721,11 +722,24 @@ export default function App() {
 
   const handleLogin = async (method: 'popup' | 'redirect' = 'popup') => {
     setLoginError(null);
+    console.log(`Attempting ${method} login...`);
     const provider = new GoogleAuthProvider();
+    
+    // Force select account to help with "invalid action" errors
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
+
     try {
       if (method === 'popup') {
         await signInWithPopup(auth, provider);
       } else {
+        // Redirect login is often blocked in iframes. 
+        // We warn the user if they are in an iframe.
+        if (window.self !== window.top) {
+          setLoginError("Redirect login cannot work inside this preview. Please use 'Open in New Tab' first.");
+          return;
+        }
         await signInWithRedirect(auth, provider);
       }
     } catch (err: any) {
@@ -735,13 +749,13 @@ export default function App() {
         return;
       }
 
-      let message = "Login failed. ";
+      let message = `Login failed (${err.code}). `;
       if (err.code === 'auth/operation-not-allowed') {
         message += "Google login is not enabled in Firebase Console.";
       } else if (err.code === 'auth/unauthorized-domain') {
-        message += "This domain is not authorized in Firebase Console. Please add your app's domain to the 'Authorized Domains' list in Firebase Authentication settings.";
+        message += `Domain "${window.location.hostname}" is not authorized. Check Firebase Console > Auth > Settings.`;
       } else if (err.code === 'auth/invalid-api-key') {
-        message += "Invalid Firebase API key. Check your configuration.";
+        message += "Invalid Firebase API key.";
       } else {
         message += err.message;
       }
@@ -878,7 +892,12 @@ export default function App() {
           <div className="mt-2 p-3 bg-red-50 border border-red-100 rounded-xl flex flex-col gap-2 text-red-600 text-[10px] font-medium">
             <div className="flex items-center gap-2">
               <Info className="w-3 h-3 shrink-0" />
-              <div className="flex-1">{loginError}</div>
+              <div className="flex-1">
+                {loginError}
+                <div className="mt-1 opacity-60 font-mono text-[8px]">
+                  Current Domain: {window.location.hostname}
+                </div>
+              </div>
               <button onClick={() => setLoginError(null)} className="p-1 hover:bg-red-100 rounded">
                 <X className="w-3 h-3" />
               </button>
@@ -886,7 +905,7 @@ export default function App() {
             <div className="flex gap-2 mt-1">
               <button 
                 onClick={() => handleLogin('redirect')}
-                className="flex-1 py-1.5 bg-red-600 text-white rounded-lg font-black uppercase tracking-tighter"
+                className="flex-1 py-1.5 bg-red-600 text-white rounded-lg font-black uppercase tracking-tighter shadow-sm active:scale-95 transition-transform"
               >
                 Try Redirect Login
               </button>
@@ -894,9 +913,9 @@ export default function App() {
                 href={window.location.href}
                 target="_blank"
                 rel="noreferrer"
-                className="flex-1 py-1.5 bg-white border border-red-200 text-red-600 rounded-lg font-black uppercase tracking-tighter text-center"
+                className="flex-1 py-1.5 bg-white border border-red-200 text-red-600 rounded-lg font-black uppercase tracking-tighter text-center shadow-sm active:scale-95 transition-transform"
               >
-                Open in New Tab
+                Open in Browser
               </a>
             </div>
           </div>
@@ -1070,6 +1089,7 @@ export default function App() {
                               event.category === 'flight' ? "bg-purple-50 text-purple-600" :
                               event.category === 'drive' ? "bg-orange-50 text-orange-600" :
                               event.category === 'stay' ? "bg-indigo-50 text-indigo-600" :
+                              event.category === 'food' ? "bg-rose-50 text-rose-600" :
                               "bg-emerald-50 text-emerald-600"
                             )}>
                               <EventIcon category={event.category} />
