@@ -45,7 +45,14 @@ import {
 import { cn } from './lib/utils';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
-import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
+import { 
+  signInWithPopup, 
+  signInWithRedirect, 
+  getRedirectResult, 
+  GoogleAuthProvider, 
+  onAuthStateChanged, 
+  User 
+} from 'firebase/auth';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { Fuel, Navigation, Map as MapIcon, Share2, Info as InfoIcon } from 'lucide-react';
@@ -680,6 +687,12 @@ export default function App() {
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => setUser(u));
     
+    // Handle redirect result
+    getRedirectResult(auth).catch((err) => {
+      console.error("Redirect login failed", err);
+      setLoginError("Redirect login failed: " + err.message);
+    });
+
     const path = 'trips/main';
     const tripDoc = doc(db, 'trips', 'main');
     
@@ -706,13 +719,15 @@ export default function App() {
     };
   }, []);
 
-  const handleLogin = async () => {
+  const handleLogin = async (method: 'popup' | 'redirect' = 'popup') => {
     setLoginError(null);
     const provider = new GoogleAuthProvider();
     try {
-      // On mobile/iframe, popups are often blocked or fail.
-      // We try popup first as it's better for the AI Studio preview.
-      await signInWithPopup(auth, provider);
+      if (method === 'popup') {
+        await signInWithPopup(auth, provider);
+      } else {
+        await signInWithRedirect(auth, provider);
+      }
     } catch (err: any) {
       console.error("Login failed", err);
       
@@ -724,7 +739,7 @@ export default function App() {
       if (err.code === 'auth/operation-not-allowed') {
         message += "Google login is not enabled in Firebase Console.";
       } else if (err.code === 'auth/unauthorized-domain') {
-        message += "This domain is not authorized in Firebase Console.";
+        message += "This domain is not authorized in Firebase Console. Please add your app's domain to the 'Authorized Domains' list in Firebase Authentication settings.";
       } else if (err.code === 'auth/invalid-api-key') {
         message += "Invalid Firebase API key. Check your configuration.";
       } else {
@@ -732,9 +747,6 @@ export default function App() {
       }
       
       setLoginError(message);
-      
-      // If popup fails, we could try redirect, but it's risky in an iframe.
-      // Instead, we'll just show the error and suggest opening in a new tab.
     }
   };
 
@@ -863,20 +875,30 @@ export default function App() {
         </div>
 
         {loginError && (
-          <div className="mt-2 p-3 bg-red-50 border border-red-100 rounded-xl flex items-center gap-2 text-red-600 text-[10px] font-medium">
-            <InfoIcon className="w-3 h-3 shrink-0" />
-            <div className="flex-1">
-              {loginError}
-              <button 
-                onClick={() => window.open(window.location.href, '_blank')}
-                className="block mt-1 font-black underline uppercase"
-              >
-                Try opening in a new tab
+          <div className="mt-2 p-3 bg-red-50 border border-red-100 rounded-xl flex flex-col gap-2 text-red-600 text-[10px] font-medium">
+            <div className="flex items-center gap-2">
+              <Info className="w-3 h-3 shrink-0" />
+              <div className="flex-1">{loginError}</div>
+              <button onClick={() => setLoginError(null)} className="p-1 hover:bg-red-100 rounded">
+                <X className="w-3 h-3" />
               </button>
             </div>
-            <button onClick={() => setLoginError(null)} className="p-1 hover:bg-red-100 rounded">
-              <X className="w-3 h-3" />
-            </button>
+            <div className="flex gap-2 mt-1">
+              <button 
+                onClick={() => handleLogin('redirect')}
+                className="flex-1 py-1.5 bg-red-600 text-white rounded-lg font-black uppercase tracking-tighter"
+              >
+                Try Redirect Login
+              </button>
+              <a 
+                href={window.location.href}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 py-1.5 bg-white border border-red-200 text-red-600 rounded-lg font-black uppercase tracking-tighter text-center"
+              >
+                Open in New Tab
+              </a>
+            </div>
           </div>
         )}
       </header>
@@ -1054,15 +1076,15 @@ export default function App() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 min-w-0">
                                   <h4 className={cn(
-                                    "text-sm font-bold text-slate-800",
+                                    "text-sm font-bold text-slate-800 leading-tight",
                                     event.hidden && "line-through"
                                   )}>
                                     {event.title}
                                   </h4>
                                   {event.hidden && (
-                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200">
+                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200 shrink-0">
                                       Cancelled
                                     </span>
                                   )}
