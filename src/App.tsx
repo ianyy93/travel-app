@@ -54,7 +54,7 @@ import {
 } from './constants';
 import { cn } from './lib/utils';
 import { db, auth } from './firebase';
-import { doc, onSnapshot, setDoc, getDoc, collection } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc } from 'firebase/firestore';
 import { 
   signInWithPopup, 
   signInWithRedirect, 
@@ -242,12 +242,20 @@ const GasPricesView = ({ userLoc }: { userLoc: [number, number] | null }) => {
                   </div>
                   <p className="font-bold text-slate-800">{item.name}</p>
                   <p className="text-[10px] text-slate-400">{item.address}</p>
+                  <a 
+                    href={`https://www.gasbuddy.com/home?search=${encodeURIComponent(item.name + ' ' + item.address)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[10px] text-blue-600 font-bold hover:underline mt-1 inline-block"
+                  >
+                    View Latest Prices on GasBuddy
+                  </a>
                 </div>
                 <div className="text-right flex flex-col gap-2">
                   <p className="text-lg font-black text-slate-900">{item.regular}</p>
                   <div className="flex gap-1">
-                    <a href={getAppleMapsUrl(item)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><Navigation className="w-3 h-3" /></a>
-                    <a href={getGoogleMapsUrl(item)} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><MapIcon className="w-3 h-3" /></a>
+                    <a href={`http://maps.apple.com/?q=${encodeURIComponent(item.name)}&ll=${item.lat},${item.lng}`} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><Navigation className="w-3 h-3" /></a>
+                    <a href={`https://www.google.com/maps/search/?api=1&query=${item.lat},${item.lng}`} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><MapIcon className="w-3 h-3" /></a>
                   </div>
                 </div>
               </div>
@@ -526,9 +534,11 @@ export default function App() {
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [view, setView] = useState<'itinerary' | 'list'>('itinerary');
+  const [view, setView] = useState<'itinerary' | 'list'>('list');
   const [currentTripId, setCurrentTripId] = useState<string>('main');
-  const [tripsList, setTripsList] = useState<{id: string, title: string, date: string}[]>([]);
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
+  const [expandedTrips, setExpandedTrips] = useState<Set<string>>(new Set());
+  const [tripsList, setTripsList] = useState<{id: string, title: string, date: string, year?: string}[]>([]);
   const [tripTitle, setTripTitle] = useState('Arizona 2026');
   const [tripDates, setTripDates] = useState('May 14 - May 21');
   const [itineraryHistory, setItineraryHistory] = useState<DayPlan[][]>([]);
@@ -700,6 +710,33 @@ export default function App() {
     saveToFirestore(finalItinerary);
   };
 
+  const handleDeleteTrip = async (tripId: string) => {
+    if (!window.confirm('Are you sure you want to delete this trip?')) return;
+    
+    try {
+      await deleteDoc(doc(db, 'trips', tripId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `trips/${tripId}`);
+    }
+  };
+
+  const isEventExpandable = (event: TripEvent) => {
+    const hasDescription = !!(event.description && event.description.trim().length > 0);
+    const hasSuggestions = !!(event.suggestions && event.suggestions.length > 0);
+    const isDogFriendly = !!(event.description?.toLowerCase().includes('dog'));
+    
+    if (hasSuggestions || isDogFriendly) return true;
+    
+    if (hasDescription) {
+      // Only expandable if description is long/complex enough to be worth expanding
+      return event.description!.length > 60 || 
+             event.description!.includes('\n') || 
+             event.description!.includes('http');
+    }
+    
+    return false;
+  };
+
   const handleToggleHide = (dayIdx: number, eventId: string) => {
     const newItinerary = itinerary.map((day, dIdx) => {
       if (dIdx !== dayIdx) return day;
@@ -786,14 +823,14 @@ export default function App() {
         const data = snapshot.data();
         setItinerary(data.days);
         setTripTitle(data.title || 'Arizona 2026');
-        setTripDates(data.dates || 'May 14 - May 21');
+        setTripDates(data.dates || 'May 14 - May 19');
       } else if (currentTripId === 'main') {
         // Only initialize if we have a user and they are an admin
         if (auth.currentUser && isAdmin) {
           setDoc(tripDoc, { 
             days: ITINERARY_DATA,
             title: 'Arizona 2026',
-            dates: 'May 14 - May 21',
+            dates: 'May 14 - May 19',
             lastUpdated: new Date().toISOString(),
             updatedBy: auth.currentUser.email
           }).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
@@ -815,11 +852,20 @@ export default function App() {
     
     const tripsCollection = collection(db, 'trips');
     const unsubscribe = onSnapshot(tripsCollection, (snapshot) => {
-      const trips = snapshot.docs.map(doc => ({
-        id: doc.id,
-        title: doc.data().title || doc.data().days?.[0]?.title || 'Untitled Trip',
-        date: doc.data().dates || doc.data().days?.[0]?.date || 'No Date'
-      }));
+      const trips = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const title = data.title || (doc.id === 'main' ? 'Arizona 2026' : 'Untitled Trip');
+        const dates = data.dates || 'May 14 - May 19';
+        const yearMatch = title.match(/\d{4}/) || dates.match(/\d{4}/);
+        const year = yearMatch ? yearMatch[0] : 'Other';
+        
+        return {
+          id: doc.id,
+          title,
+          date: dates,
+          year
+        };
+      });
       setTripsList(trips);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'trips');
@@ -827,6 +873,32 @@ export default function App() {
 
     return () => unsubscribe();
   }, [user]);
+
+  const toggleEventExpansion = (id: string) => {
+    setExpandedEvents(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleTripExpansion = (id: string) => {
+    setExpandedTrips(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleAddTrip = () => {
+    const id = prompt("Enter a unique ID for the new trip (e.g. japan-2027):");
+    if (id) {
+      setCurrentTripId(id);
+      setView('itinerary');
+    }
+  };
 
   const handleLogin = async (method: 'popup' | 'redirect' = 'popup') => {
     setLoginError(null);
@@ -921,6 +993,16 @@ export default function App() {
   const activeDay = itinerary[activeDayIdx];
 
   // Check if an event is "current"
+  const parseTime = (timeStr: string) => {
+    const [time, modifier] = timeStr.split(' ');
+    let [hours, minutes] = time.split(':').map(Number);
+    if (modifier === 'PM' && hours < 12) hours += 12;
+    if (modifier === 'AM' && hours === 12) hours = 0;
+    const d = new Date(currentTime);
+    d.setHours(hours, minutes, 0, 0);
+    return d;
+  };
+
   const isCurrentEvent = (event: TripEvent) => {
     if (!event.startTime) return false;
     
@@ -932,16 +1014,6 @@ export default function App() {
     if (currentTime.getFullYear() !== tripYear || currentTime.getMonth() !== tripMonth || currentTime.getDate() !== day) {
       return false;
     }
-
-    const parseTime = (timeStr: string) => {
-      const [time, modifier] = timeStr.split(' ');
-      let [hours, minutes] = time.split(':').map(Number);
-      if (modifier === 'PM' && hours < 12) hours += 12;
-      if (modifier === 'AM' && hours === 12) hours = 0;
-      const d = new Date(currentTime);
-      d.setHours(hours, minutes, 0, 0);
-      return d;
-    };
 
     try {
       const start = parseTime(event.startTime);
@@ -1061,6 +1133,27 @@ export default function App() {
             )}
           </h1>
           <div className="flex items-center gap-2">
+            {view === 'list' && isAdmin && (
+              <>
+                <button 
+                  onClick={() => setShowAiAssistant(!showAiAssistant)}
+                  className={cn(
+                    "p-2 rounded-full transition-all",
+                    showAiAssistant ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600"
+                  )}
+                  title="AI Assistant"
+                >
+                  <Sparkles className="w-5 h-5" />
+                </button>
+                <button 
+                  onClick={handleAddTrip}
+                  className="p-2 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all"
+                  title="Add Trip"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+              </>
+            )}
             {view === 'itinerary' && isAdmin && (
               <button 
                 onClick={() => setShowAiAssistant(!showAiAssistant)}
@@ -1203,7 +1296,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {view === 'itinerary' && (
+        {view === 'itinerary' && activeTab === 'itinerary' && (
           <div className="mt-1">
             {isEditing ? (
               <input 
@@ -1224,60 +1317,80 @@ export default function App() {
 
       {view === 'list' ? (
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-black text-slate-400 uppercase tracking-wider">Your Adventures</h2>
-            {isAdmin && (
-              <button 
-                onClick={() => {
-                  const id = prompt("Enter a unique ID for the new trip (e.g. japan-2027):");
-                  if (id) {
-                    setCurrentTripId(id);
-                    setView('itinerary');
-                  }
-                }}
-                className="p-2 bg-blue-600 text-white rounded-full shadow-lg"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-          
           {tripsList.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
               <p className="text-slate-400 text-sm">No trips found. Create your first one!</p>
             </div>
           ) : (
-            <div className="grid gap-4">
-              {tripsList.map(trip => (
-                <button
-                  key={trip.id}
-                  onClick={() => {
-                    setCurrentTripId(trip.id);
-                    setView('itinerary');
-                  }}
-                  className={cn(
-                    "w-full text-left p-5 rounded-3xl border transition-all group",
-                    currentTripId === trip.id 
-                      ? "bg-blue-600 border-blue-500 text-white shadow-xl shadow-blue-100" 
-                      : "bg-white border-slate-100 hover:border-blue-200 text-slate-900"
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className={cn(
-                        "text-[10px] font-black uppercase tracking-tighter mb-1",
-                        currentTripId === trip.id ? "text-blue-200" : "text-slate-400"
-                      )}>
-                        {trip.date}
-                      </p>
-                      <h3 className="text-lg font-black tracking-tight leading-tight">{trip.title}</h3>
-                    </div>
-                    <ChevronRight className={cn(
-                      "w-5 h-5 transition-transform group-hover:translate-x-1",
-                      currentTripId === trip.id ? "text-blue-200" : "text-slate-300"
-                    )} />
+            <div className="space-y-8">
+              {(Object.entries(
+                tripsList.reduce((acc, trip) => {
+                  const year = trip.year || 'Other';
+                  if (!acc[year]) acc[year] = [];
+                  acc[year].push(trip);
+                  return acc;
+                }, {} as Record<string, typeof tripsList>)
+              ) as [string, typeof tripsList][]).sort((a, b) => b[0].localeCompare(a[0])).map(([year, yearTrips]) => (
+                <div key={year} className="space-y-4">
+                  <div className="sticky top-0 z-10 bg-slate-50/80 backdrop-blur-md py-2 -mx-6 px-6">
+                    <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest">{year}</h2>
                   </div>
-                </button>
+                  <div className="grid gap-4">
+                    {yearTrips.map(trip => {
+                      // Strip year from title for display
+                      const displayTitle = trip.title.replace(/\s*\d{4}\s*/g, ' ').trim();
+                      return (
+                        <div key={trip.id} className="relative overflow-hidden rounded-3xl group">
+                          {/* Delete Action (Behind) */}
+                          <div className="absolute inset-0 bg-red-500 flex items-center justify-end px-6">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteTrip(trip.id);
+                              }}
+                              className="text-white flex flex-col items-center gap-1"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                              <span className="text-[8px] font-black uppercase tracking-tighter">Delete</span>
+                            </button>
+                          </div>
+
+                          <motion.div
+                            drag="x"
+                            dragConstraints={{ left: -80, right: 0 }}
+                            dragElastic={0.1}
+                            className={cn(
+                              "relative w-full text-left p-5 rounded-3xl border transition-all",
+                              currentTripId === trip.id 
+                                ? "bg-blue-600 border-blue-500 text-white shadow-xl shadow-blue-100" 
+                                : "bg-white border-slate-100 hover:border-blue-200 text-slate-900"
+                            )}
+                            onClick={() => {
+                              setCurrentTripId(trip.id);
+                              setView('itinerary');
+                            }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className={cn(
+                                  "text-[10px] font-black uppercase tracking-tighter mb-1",
+                                  currentTripId === trip.id ? "text-blue-200" : "text-slate-400"
+                                )}>
+                                  {trip.date}
+                                </p>
+                                <h3 className="text-lg font-black tracking-tight leading-tight">{displayTitle}</h3>
+                              </div>
+                              <ChevronRight className={cn(
+                                "w-5 h-5 transition-transform group-hover:translate-x-1",
+                                currentTripId === trip.id ? "text-blue-200" : "text-slate-300"
+                              )} />
+                            </div>
+                          </motion.div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               ))}
             </div>
           )}
@@ -1285,22 +1398,24 @@ export default function App() {
       ) : (
         <>
           {/* Day Tabs */}
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide py-2 px-6">
-          {itinerary.map((day, i) => (
-            <button
-              key={i}
-              onClick={() => setActiveDayIdx(i)}
-              className={cn(
-                "flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold transition-all",
-                activeDayIdx === i 
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105" 
-                  : "bg-slate-100 text-slate-500"
-              )}
-            >
-              {day.date}
-            </button>
-          ))}
-        </div>
+          {activeTab === 'itinerary' && (
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide py-2 px-6">
+              {itinerary.map((day, i) => (
+                <button
+                  key={i}
+                  onClick={() => setActiveDayIdx(i)}
+                  className={cn(
+                    "flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold transition-all",
+                    activeDayIdx === i 
+                      ? "bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105" 
+                      : "bg-slate-100 text-slate-500"
+                  )}
+                >
+                  {day.date}
+                </button>
+              ))}
+            </div>
+          )}
 
         {/* Content */}
         <main className="flex-1 overflow-y-auto scrollbar-hide">
@@ -1369,227 +1484,209 @@ export default function App() {
               </div>
 
               <div className="relative">
-                {/* Timeline Line */}
-                <div className="absolute left-[19px] top-4 bottom-4 w-0.5 bg-slate-100" />
-
                 <div className="space-y-4">
                   {activeDay.events.map((event, idx) => {
                     const isCurrent = isCurrentEvent(event);
                     
-                    if (event.type === 'travel') {
-                      if (event.hidden) return null;
-                      return (
-                        <div key={event.id} className="relative pl-10 py-2">
+                    if (event.hidden && event.type === 'travel') return null;
+
+                    return (
+                      <div 
+                        key={event.id} 
+                        onClick={() => isEventExpandable(event) && toggleEventExpansion(event.id)}
+                        className={cn(
+                          "relative pl-12 transition-all",
+                          isEventExpandable(event) && "cursor-pointer active:scale-[0.99]"
+                        )}
+                      >
+                        {/* Icon & Chevron Column */}
+                        <div className="absolute left-0 top-1 w-10 flex flex-col items-center gap-1.5 z-10">
                           <div className={cn(
-                            "absolute left-0 top-1/2 -translate-y-1/2 w-10 flex justify-center z-10 transition-all",
-                            isCurrent && "scale-110"
+                            "p-2 rounded-xl transition-all border",
+                            isCurrent ? "bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-100 scale-110" : 
+                            event.type === 'travel' ? "bg-slate-50 border-slate-100 text-slate-400" :
+                            event.category === 'flight' ? "bg-purple-50 border-purple-100 text-purple-600" :
+                            event.category === 'drive' ? "bg-orange-50 border-orange-100 text-orange-600" :
+                            event.category === 'stay' ? "bg-indigo-50 border-indigo-100 text-indigo-600" :
+                            event.category === 'food' ? "bg-rose-50 border-rose-100 text-rose-600" :
+                            "bg-emerald-50 border-emerald-100 text-emerald-600"
                           )}>
-                            <div className={cn(
-                              "p-1 rounded-full border transition-all",
-                              isCurrent ? "bg-blue-600 border-blue-400 shadow-lg shadow-blue-100" : "bg-slate-50 border-slate-100"
-                            )}>
-                              <div className={isCurrent ? "text-white" : "text-slate-400"}>
-                                <EventIcon category={event.category} />
-                              </div>
+                            <EventIcon category={event.category} />
+                          </div>
+                          {isEventExpandable(event) && (
+                            <ChevronDown className={cn(
+                              "w-3.5 h-3.5 text-slate-400 transition-transform duration-200",
+                              expandedEvents.has(event.id) && "rotate-180"
+                            )} />
+                          )}
+                        </div>
+
+                        {/* Content Tile */}
+                        <div 
+                          className={cn(
+                            "rounded-2xl p-4 transition-all",
+                            event.type === 'travel' 
+                              ? "bg-transparent border border-dashed border-slate-200" 
+                              : "bg-white border border-slate-100 shadow-sm",
+                            isCurrent && "ring-1 ring-blue-100 border-blue-200",
+                            event.hidden && "opacity-50 grayscale"
+                          )}
+                        >
+                          {/* Header: Title & Time */}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2 min-w-0">
+                              <h4 className={cn(
+                                "text-sm font-bold text-slate-800 leading-tight",
+                                event.hidden && "line-through"
+                              )}>
+                                {event.title}
+                              </h4>
+                              {event.hidden && (
+                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200 shrink-0">
+                                  Cancelled
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {(event.startTime || event.endTime) && (
+                                <span className="text-[10px] font-medium text-slate-400 flex items-center gap-1">
+                                  <Clock className="w-3 h-3" /> 
+                                  {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
+                                </span>
+                              )}
+                              {event.type === 'activity' && (
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleHide(activeDayIdx, event.id);
+                                  }}
+                                  className={cn(
+                                    "p-1 transition-colors",
+                                    event.hidden ? "text-red-500 hover:text-red-600" : "text-slate-400 hover:text-blue-600"
+                                  )}
+                                  title={event.hidden ? "Show activity" : "Hide/Cancel activity"}
+                                >
+                                  {event.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                </button>
+                              )}
                             </div>
                           </div>
-                          <div className={cn(
-                            "flex items-center justify-between rounded-xl p-3 border border-dashed transition-all",
-                            isCurrent ? "bg-blue-50/50 border-blue-200 ring-1 ring-blue-100" : "bg-slate-50/50 border-slate-200"
-                          )}>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                  <span>{event.origin?.name}</span>
-                                  <ArrowRight className="w-3 h-3" />
-                                  <span>{event.destination?.name}</span>
-                                </div>
-                                <div className="flex items-center justify-between mt-1">
-                                  <h5 className="text-xs font-bold text-slate-600">{event.title}</h5>
-                                  {(event.startTime || event.endTime) && (
-                                    <span className="text-[9px] font-medium text-slate-400 flex items-center gap-1">
-                                      <Clock className="w-2.5 h-2.5" />
-                                      {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
-                                    </span>
-                                  )}
-                                </div>
-                                {event.description && (
-                                  <p className="text-[10px] text-slate-400 mt-0.5">
-                                    {event.description.split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
-                                      part.match(/^https?:\/\//) ? (
-                                        <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
-                                          {part}
-                                        </a>
-                                      ) : part
-                                    )}
-                                  </p>
-                                )}
+
+                          {/* One-line Description */}
+                          {event.description && (
+                            <div className={cn(
+                              "text-[11px] text-slate-500 mt-1 leading-relaxed",
+                              !expandedEvents.has(event.id) && "line-clamp-1"
+                            )}>
+                              {event.description.split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
+                                part.match(/^https?:\/\//) ? (
+                                  <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline" onClick={(e) => e.stopPropagation()}>
+                                    {part}
+                                  </a>
+                                ) : part
+                              )}
+                            </div>
+                          )}
+
+                          {/* Location / Travel Details */}
+                          {event.type === 'travel' ? (
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-0">
+                                <span className="truncate">{event.origin?.name}</span>
+                                <ArrowRight className="w-3 h-3 shrink-0" />
+                                <span className="truncate">{event.destination?.name}</span>
                               </div>
-                            {event.origin && event.destination && (
-                              <div className="flex gap-1 ml-2">
+                              {event.origin && event.destination && (
+                                <div className="flex gap-1 shrink-0">
+                                  <a 
+                                    href={(() => {
+                                      const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
+                                      let url = `http://maps.apple.com/?saddr=${event.origin.lat},${event.origin.lng}&daddr=${event.destination.lat},${event.destination.lng}&dirflg=${mode}`;
+                                      if (event.waypoints && event.waypoints.length > 0) {
+                                        url += `&to=${event.waypoints.map(w => `${w.lat},${w.lng}`).join("&to=")}`;
+                                      }
+                                      return url;
+                                    })()}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                                    title="Apple Maps Directions"
+                                  >
+                                    <Navigation className="w-3 h-3" />
+                                  </a>
+                                  <a 
+                                    href={(() => {
+                                      const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
+                                      const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
+                                      return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin.name)}&destination=${encodeURIComponent(event.destination.name)}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
+                                    })()}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                                    title="Google Maps Directions"
+                                  >
+                                    <MapIcon className="w-3 h-3" />
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          ) : event.location && (
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1 min-w-0">
+                                <MapPin className="w-3 h-3 text-slate-400" />
+                                <span className="text-[10px] text-slate-400 font-medium truncate">
+                                  {event.location.name}
+                                </span>
+                              </div>
+                              <div className="flex gap-1 shrink-0">
                                 <a 
-                                  href={(() => {
-                                    const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
-                                    let url = `http://maps.apple.com/?saddr=${event.origin.lat},${event.origin.lng}&daddr=${event.destination.lat},${event.destination.lng}&dirflg=${mode}`;
-                                    if (event.waypoints && event.waypoints.length > 0) {
-                                      url += `&to=${event.waypoints.map(w => `${w.lat},${w.lng}`).join("&to=")}`;
-                                    }
-                                    return url;
-                                  })()}
-                                  target="_blank"
+                                  href={`http://maps.apple.com/?q=${encodeURIComponent(event.location.name)}&ll=${event.location.lat},${event.location.lng}`} 
+                                  target="_blank" 
                                   rel="noreferrer"
-                                  className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                                  title="Apple Maps Directions"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
                                 >
                                   <Navigation className="w-3 h-3" />
                                 </a>
                                 <a 
-                                  href={(() => {
-                                    const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
-                                    const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
-                                    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin.name)}&destination=${encodeURIComponent(event.destination.name)}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
-                                  })()}
-                                  target="_blank"
+                                  href={`https://www.google.com/maps/search/?api=1&query=${event.location.lat},${event.location.lng}`} 
+                                  target="_blank" 
                                   rel="noreferrer"
-                                  className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                                  title="Google Maps Directions"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
                                 >
                                   <MapIcon className="w-3 h-3" />
                                 </a>
                               </div>
-                            )}
-                          </div>
-                          {isEditing && user?.email === 'ianyy93@gmail.com' && (
-                            <button 
-                              onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: idx })}
-                              className="absolute -top-1 -right-1 p-1.5 bg-blue-600 text-white rounded-full shadow-lg z-20"
-                            >
-                              <Edit2 className="w-2.5 h-2.5" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div key={event.id} className="relative pl-10 group">
-                        {/* Timeline Dot */}
-                        <div className={cn(
-                          "absolute left-0 top-5 w-10 h-10 -ml-[1px] rounded-full border-4 border-white z-10 flex items-center justify-center transition-all",
-                          isCurrent ? "bg-blue-600 scale-110 shadow-lg shadow-blue-100" : "bg-slate-200"
-                        )}>
-                          <div className={cn("w-2 h-2 rounded-full", isCurrent ? "bg-white" : "bg-slate-400")} />
-                        </div>
-
-                        {/* Current Indicator Label */}
-                        {isCurrent && (
-                          <div className="absolute -left-2 top-0 text-[8px] font-black text-blue-600 uppercase tracking-tighter bg-white px-1 rounded border border-blue-100 z-20">
-                            Now
-                          </div>
-                        )}
-
-                        <div className={cn(
-                          "bg-white p-4 rounded-2xl border shadow-sm transition-all",
-                          isCurrent ? "border-blue-100 ring-1 ring-blue-50" : "border-slate-100",
-                          event.hidden && "opacity-50 grayscale"
-                        )}>
-                          <div className="flex items-start gap-3">
-                            <div className={cn(
-                              "mt-1 p-2 rounded-xl shrink-0",
-                              event.category === 'flight' ? "bg-purple-50 text-purple-600" :
-                              event.category === 'drive' ? "bg-orange-50 text-orange-600" :
-                              event.category === 'stay' ? "bg-indigo-50 text-indigo-600" :
-                              event.category === 'food' ? "bg-rose-50 text-rose-600" :
-                              "bg-emerald-50 text-emerald-600"
-                            )}>
-                              <EventIcon category={event.category} />
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                                  <h4 className={cn(
-                                    "text-sm font-bold text-slate-800 leading-tight",
-                                    event.hidden && "line-through"
-                                  )}>
-                                    {event.title}
-                                  </h4>
-                                  {event.hidden && (
-                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200 shrink-0">
-                                      Cancelled
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {(event.startTime || event.endTime) && (
-                                    <span className="text-[10px] font-medium text-slate-400 flex items-center gap-1">
-                                      <Clock className="w-3 h-3" /> 
-                                      {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
-                                    </span>
-                                  )}
-                                  <button 
-                                    onClick={() => handleToggleHide(activeDayIdx, event.id)}
-                                    className={cn(
-                                      "p-1 transition-colors",
-                                      event.hidden ? "text-red-500 hover:text-red-600" : "text-slate-400 hover:text-blue-600"
-                                    )}
-                                    title={event.hidden ? "Show activity" : "Hide/Cancel activity"}
-                                  >
-                                    {event.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                                  </button>
-                                </div>
-                              </div>
-                              
-                              {event.description && (
-                                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                  {event.description.split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
-                                    part.match(/^https?:\/\//) ? (
-                                      <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
-                                        {part}
-                                      </a>
-                                    ) : part
-                                  )}
-                                </p>
-                              )}
+                          )}
 
-                              {event.location && (
-                                <div className="mt-3 pt-3 border-t border-slate-50 flex items-center justify-between">
-                                  <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
-                                    <MapPin className="w-3 h-3" /> {event.location.name}
-                                  </span>
-                                  <div className="flex gap-2">
-                                    <a 
-                                      href={getAppleMapsUrl(event.location)} 
-                                      target="_blank" 
-                                      rel="noreferrer"
-                                      className="p-1.5 bg-slate-50 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
-                                    >
-                                      <Navigation className="w-3 h-3" />
-                                    </a>
-                                    <a 
-                                      href={getGoogleMapsUrl(event.location)} 
-                                      target="_blank" 
-                                      rel="noreferrer"
-                                      className="p-1.5 bg-slate-50 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
-                                    >
-                                      <MapIcon className="w-3 h-3" />
-                                    </a>
-                                  </div>
-                                </div>
-                              )}
-
+                          {/* Expanded Content */}
+                          {expandedEvents.has(event.id) && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              className="overflow-hidden"
+                            >
                               {event.description?.toLowerCase().includes('dog') && (
                                 <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 text-[8px] font-black uppercase rounded-full">
                                   <Dog className="w-2 h-2" /> Dog Friendly
                                 </div>
                               )}
 
-                              {event.suggestions && (
+                              {event.suggestions && event.suggestions.length > 0 && (
                                 <div className="mt-4 space-y-2">
                                   <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Suggestions</p>
                                   <div className="grid grid-cols-1 gap-2">
                                     {event.suggestions.map((sug, sIdx) => (
                                       <button
                                         key={sIdx}
-                                        onClick={() => handleSelectSuggestion(activeDay.id, event.id, sug)}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleSelectSuggestion(activeDay.id, event.id, sug);
+                                        }}
                                         className={cn(
                                           "text-left p-2.5 rounded-xl border transition-all",
                                           event.location?.name === sug.name 
@@ -1598,60 +1695,54 @@ export default function App() {
                                         )}
                                       >
                                         <div className="flex justify-between items-start">
-                                          <span className="text-xs font-bold text-slate-700">{sug.name}</span>
-                                          <div className="flex gap-1">
+                                          <div className="min-w-0">
+                                            <p className="text-xs font-bold text-slate-700 truncate">{sug.name}</p>
+                                            <p className="text-[9px] text-slate-400 truncate">{sug.address}</p>
+                                          </div>
+                                          <div className="flex gap-1 shrink-0 ml-2">
                                             <a 
-                                              href={getGoogleMapsUrl(sug)}
+                                              href={`http://maps.apple.com/?q=${encodeURIComponent(sug.name)}&ll=${sug.lat},${sug.lng}`}
                                               target="_blank"
                                               rel="noreferrer"
                                               onClick={(e) => e.stopPropagation()}
                                               className="p-1 text-slate-400 hover:text-blue-600"
                                             >
-                                              <ExternalLink className="w-3 h-3" />
+                                              <Navigation className="w-2.5 h-2.5" />
+                                            </a>
+                                            <a 
+                                              href={`https://www.google.com/maps/search/?api=1&query=${sug.lat},${sug.lng}`}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="p-1 text-slate-400 hover:text-blue-600"
+                                            >
+                                              <MapIcon className="w-2.5 h-2.5" />
                                             </a>
                                           </div>
                                         </div>
-                                        {sug.description && (
-                                          <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{sug.description}</p>
-                                        )}
                                       </button>
                                     ))}
                                   </div>
-                                  <div className="flex gap-2">
-                                    <a 
-                                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.title)}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="flex-1 py-2 border border-dashed border-slate-200 rounded-xl text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:border-blue-200 hover:text-blue-500 transition-all flex items-center justify-center gap-1"
-                                    >
-                                      <MapIcon className="w-3 h-3" /> Search on Google Maps
-                                    </a>
-                                    {user?.email === 'ianyy93@gmail.com' && (
-                                      <button 
-                                        onClick={() => handleAddManualSuggestion(activeDay.id, event.id)}
-                                        className="px-3 py-2 border border-dashed border-slate-200 rounded-xl text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:border-blue-200 hover:text-blue-500 transition-all flex items-center justify-center gap-1"
-                                      >
-                                        <Plus className="w-3 h-3" /> Add via Link
-                                      </button>
-                                    )}
-                                  </div>
                                 </div>
                               )}
-                            </div>
-                          </div>
+                            </motion.div>
+                          )}
                         </div>
-                        {isEditing && (
+
+                        {/* Edit Button */}
+                        {isEditing && user?.email === 'ianyy93@gmail.com' && (
                           <button 
                             onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: idx })}
-                            className="absolute -top-2 -right-2 p-2 bg-blue-600 text-white rounded-full shadow-lg z-10"
+                            className="absolute -top-1 -right-1 p-1.5 bg-blue-600 text-white rounded-full shadow-lg z-20"
                           >
-                            <Edit2 className="w-3 h-3" />
+                            <Edit2 className="w-2.5 h-2.5" />
                           </button>
                         )}
                       </div>
                     );
                   })}
-                  
+                </div>
+    
                   {isEditing && (
                     <div className="pl-10">
                       <button 
@@ -1662,7 +1753,6 @@ export default function App() {
                       </button>
                     </div>
                   )}
-                </div>
               </div>
             </motion.div>
           )}
@@ -1763,17 +1853,19 @@ export default function App() {
       )}
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-around items-center z-50">
-        <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")}>
-          <Calendar className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Itinerary</span>
-        </button>
-        <button onClick={() => setActiveTab('gas')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'gas' ? "text-blue-600" : "text-slate-400")}>
-          <Fuel className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Gas</span>
-        </button>
-        <button onClick={() => setActiveTab('info')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'info' ? "text-blue-600" : "text-slate-400")}>
-          <Info className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Details</span>
-        </button>
-      </nav>
+      {view === 'itinerary' && (
+        <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-around items-center z-50">
+          <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")}>
+            <Calendar className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Itinerary</span>
+          </button>
+          <button onClick={() => setActiveTab('gas')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'gas' ? "text-blue-600" : "text-slate-400")}>
+            <Fuel className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Gas</span>
+          </button>
+          <button onClick={() => setActiveTab('info')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'info' ? "text-blue-600" : "text-slate-400")}>
+            <Info className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Details</span>
+          </button>
+        </nav>
+      )}
     </div>
   );
 }
