@@ -1,0 +1,17 @@
+{
+  "name": "Arizona Adventure 2026",
+  "short_name": "Arizona",
+  "description": "Premium Travel Itinerary App",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/826/826070.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
