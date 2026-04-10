@@ -42,7 +42,10 @@ import {
   MessageSquare,
   MapIcon,
   Navigation,
-  History
+  History,
+  ShoppingBag,
+  Home,
+  Filter
 } from 'lucide-react';
 import { 
   ITINERARY_DATA, 
@@ -57,7 +60,7 @@ import {
 } from './constants';
 import { cn } from './lib/utils';
 import { db, auth } from './firebase';
-import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { 
   signInWithPopup, 
   signInWithRedirect, 
@@ -532,10 +535,313 @@ const EditActivityModal = ({
   );
 };
 
+const AddPlaceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (place: any) => void }) => {
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState<'attraction' | 'restaurant' | 'shopping' | 'stay' | 'logistics'>('attraction');
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center p-4 sm:p-6">
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+      />
+      <motion.div 
+        initial={{ opacity: 0, y: 100, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 100, scale: 0.95 }}
+        className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden p-6 space-y-6"
+      >
+        <div>
+          <h3 className="text-xl font-black text-slate-900 tracking-tight">Add Place</h3>
+          <p className="text-xs text-slate-400 font-medium">Add a new place to your shortlist</p>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase">Name</label>
+            <input 
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="e.g. Local Coffee Shop"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase">Category</label>
+            <div className="grid grid-cols-3 gap-2 mt-1">
+              {['attraction', 'restaurant', 'shopping', 'stay', 'logistics'].map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setCategory(cat as any)}
+                  className={cn(
+                    "py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all",
+                    category === cat 
+                      ? "bg-slate-900 text-white border-slate-900" 
+                      : "bg-white text-slate-400 border-slate-100"
+                  )}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Latitude</label>
+              <input 
+                type="text"
+                value={lat}
+                onChange={e => setLat(e.target.value)}
+                className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+                placeholder="34.0522"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Longitude</label>
+              <input 
+                type="text"
+                value={lng}
+                onChange={e => setLng(e.target.value)}
+                className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+                placeholder="-118.2437"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-3 pt-4">
+          <button onClick={onClose} className="flex-1 py-4 bg-slate-50 text-slate-600 rounded-2xl font-bold">Cancel</button>
+          <button 
+            onClick={() => onSave({ name, category, location: lat && lng ? { name, lat: parseFloat(lat), lng: parseFloat(lng) } : undefined })}
+            className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg shadow-blue-200"
+          >
+            Add to Shortlist
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+const PlacesView = ({ 
+  itinerary, 
+  shortlist, 
+  onAddShortlist, 
+  onRemoveShortlist,
+  isAdmin 
+}: { 
+  itinerary: DayPlan[], 
+  shortlist: any[], 
+  onAddShortlist: (place: any) => void,
+  onRemoveShortlist: (id: string) => void,
+  isAdmin: boolean 
+}) => {
+  const [filter, setFilter] = useState<string>('all');
+  const [search, setSearch] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
+
+  // Extract all places from itinerary
+  const itineraryPlaces = useMemo(() => {
+    const places: any[] = [];
+    const seen = new Set<string>();
+
+    const addPlace = (loc: Location, category: string, id: string, dayDate: string) => {
+      const key = `${loc.name}-${loc.lat}-${loc.lng}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      places.push({
+        id,
+        name: loc.name,
+        category,
+        location: loc,
+        source: 'itinerary',
+        dayDate
+      });
+    };
+
+    const isLogistics = (name: string, eventCat: string) => {
+      const lowerName = name.toLowerCase();
+      const logisticsKeywords = ['airport', 'rental', 'station', 'terminal', 'gas', 'parking', 'shuttle', 'yyz', 'phx'];
+      if (logisticsKeywords.some(k => lowerName.includes(k))) return true;
+      if (eventCat === 'flight' || eventCat === 'transit') return true;
+      return false;
+    };
+
+    itinerary.forEach(day => {
+      day.events.forEach(event => {
+        if (event.location) {
+          let cat = 'attraction';
+          if (event.category === 'food') cat = 'restaurant';
+          if (event.category === 'stay') cat = 'stay';
+          if (isLogistics(event.location.name, event.category)) cat = 'logistics';
+          addPlace(event.location, cat, `itinerary-${event.id}`, day.date);
+        }
+        if (event.origin) {
+          let cat = isLogistics(event.origin.name, event.category) ? 'logistics' : 'attraction';
+          addPlace(event.origin, cat, `itinerary-${event.id}-origin`, day.date);
+        }
+        if (event.destination) {
+          let cat = isLogistics(event.destination.name, event.category) ? 'logistics' : 'attraction';
+          addPlace(event.destination, cat, `itinerary-${event.id}-dest`, day.date);
+        }
+      });
+    });
+    return places;
+  }, [itinerary]);
+
+  const allPlaces = [...itineraryPlaces, ...shortlist.map(p => ({ ...p, source: 'shortlist' }))];
+
+  const filteredPlaces = allPlaces.filter(p => {
+    const matchesFilter = filter === 'all' || p.category === filter;
+    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
+    return matchesFilter && matchesSearch;
+  });
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6 pb-32 space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-black text-slate-900 tracking-tight">Places</h2>
+        {isAdmin && (
+          <button 
+            onClick={() => setShowAddModal(true)}
+            className="p-2 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-100"
+          >
+            <Plus className="w-5 h-5" />
+          </button>
+        )}
+      </div>
+
+      {/* Search & Filter */}
+      <div className="space-y-3">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input 
+            type="text"
+            placeholder="Search places..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+          />
+        </div>
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide py-1">
+          {['all', 'attraction', 'restaurant', 'shopping', 'stay', 'logistics'].map(cat => (
+            <button
+              key={cat}
+              onClick={() => setFilter(cat)}
+              className={cn(
+                "px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap",
+                filter === cat 
+                  ? "bg-slate-900 text-white border-slate-900" 
+                  : "bg-white text-slate-400 border-slate-100"
+              )}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Places List */}
+      <div className="grid gap-4">
+        {filteredPlaces.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
+            <p className="text-slate-400 text-sm">No places found matching your filter.</p>
+          </div>
+        ) : (
+          filteredPlaces.map((place, idx) => (
+            <div key={idx} className="bg-white p-4 rounded-3xl border border-slate-100 flex items-center justify-between group">
+              <div className="flex items-center gap-4">
+                <div className={cn(
+                  "w-12 h-12 rounded-2xl flex items-center justify-center",
+                  place.category === 'restaurant' ? "bg-orange-50 text-orange-600" :
+                  place.category === 'shopping' ? "bg-purple-50 text-purple-600" :
+                  place.category === 'stay' ? "bg-blue-50 text-blue-600" :
+                  place.category === 'logistics' ? "bg-slate-100 text-slate-600" :
+                  "bg-green-50 text-green-600"
+                )}>
+                  {place.category === 'restaurant' ? <Utensils className="w-5 h-5" /> :
+                   place.category === 'shopping' ? <ShoppingBag className="w-5 h-5" /> :
+                   place.category === 'stay' ? <Home className="w-5 h-5" /> :
+                   place.category === 'logistics' ? <Plane className="w-5 h-5" /> :
+                   <MapPin className="w-5 h-5" />}
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 leading-tight">{place.name}</h4>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] font-black uppercase tracking-tighter text-slate-400">
+                      {place.category}
+                    </span>
+                    {place.dayDate && (
+                      <span className="text-[10px] font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full">
+                        {place.dayDate}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {place.location && (
+                  <div className="flex gap-1">
+                    <a 
+                      href={getAppleMapsUrl(place.location)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-blue-600 transition-all"
+                      title="Apple Maps"
+                    >
+                      <Navigation className="w-4 h-4" />
+                    </a>
+                    <a 
+                      href={getGoogleMapsUrl(place.location)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-blue-600 transition-all"
+                      title="Google Maps"
+                    >
+                      <MapIcon className="w-4 h-4" />
+                    </a>
+                  </div>
+                )}
+                {place.source === 'shortlist' && isAdmin && (
+                  <button 
+                    onClick={() => onRemoveShortlist(place.id)}
+                    className="p-2 hover:bg-red-50 rounded-xl text-slate-300 hover:text-red-600 transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Add Place Modal */}
+      <AnimatePresence>
+        {showAddModal && (
+          <AddPlaceModal 
+            onClose={() => setShowAddModal(false)}
+            onSave={(p) => {
+              onAddShortlist(p);
+              setShowAddModal(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'itinerary' | 'gas' | 'info'>('itinerary');
+  const [activeTab, setActiveTab] = useState<'itinerary' | 'gas' | 'info' | 'places'>('itinerary');
   const [activeDayIdx, setActiveDayIdx] = useState(0);
   const [itinerary, setItinerary] = useState<DayPlan[]>(ITINERARY_DATA);
   const [user, setUser] = useState<User | null>(null);
@@ -547,6 +853,7 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [view, setView] = useState<'itinerary' | 'list'>('list');
   const [currentTripId, setCurrentTripId] = useState<string>('main');
+  const [shortlist, setShortlist] = useState<any[]>([]);
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [expandedTrips, setExpandedTrips] = useState<Set<string>>(new Set());
   const [tripsList, setTripsList] = useState<{id: string, title: string, date: string, year?: string}[]>([]);
@@ -600,21 +907,34 @@ export default function App() {
 
   const applyAiProposal = () => {
     if (!aiProposal) return;
-    setItineraryHistory(prev => [...prev, itinerary]);
-    setItinerary(aiProposal.itinerary);
-    saveToFirestore(aiProposal.itinerary);
+    
+    if (view === 'list') {
+      // Create a new trip from proposal
+      const baseTitle = aiProposal.itinerary[0]?.title || 'New Trip';
+      const newId = baseTitle.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substr(2, 5);
+      setCurrentTripId(newId);
+      setItinerary(aiProposal.itinerary);
+      saveToFirestore(aiProposal.itinerary, undefined, undefined, false, [], newId);
+      setView('itinerary');
+    } else {
+      setItineraryHistory(prev => [...prev, itinerary]);
+      setItinerary(aiProposal.itinerary);
+      saveToFirestore(aiProposal.itinerary);
+    }
+    
     setAiProposal(null);
     setShowAiAssistant(false);
   };
 
-  const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string, isAutoSync = false) => {
+  const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string, isAutoSync = false, currentShortlist?: any[], tripIdOverride?: string) => {
     if (!auth.currentUser) return;
     if (!isAdmin) {
       console.error("Unauthorized: You do not have permission to save changes.");
       return;
     }
-    const path = `trips/${currentTripId}`;
-    const tripDoc = doc(db, 'trips', currentTripId);
+    const targetId = tripIdOverride || currentTripId;
+    const path = `trips/${targetId}`;
+    const tripDoc = doc(db, 'trips', targetId);
     
     try {
       // If this is a structural update or manual save, we might want to record history
@@ -626,12 +946,19 @@ export default function App() {
         templateVersion: TEMPLATE_VERSION,
         lastUpdated: new Date().toISOString(),
         updatedBy: auth.currentUser.email,
-        isAutoSync
+        isAutoSync,
+        shortlist: currentShortlist || shortlist
       }, { merge: true });
 
       // Record history for manual changes (not auto-syncs)
       if (!isAutoSync) {
-        const historyRef = doc(collection(db, 'trips', currentTripId, 'history'));
+        // Prune history if it exceeds 50 versions to save space
+        if (dbHistory.length >= 50) {
+          const oldest = dbHistory[dbHistory.length - 1];
+          await deleteDoc(doc(db, 'trips', targetId, 'history', oldest.id));
+        }
+
+        const historyRef = doc(collection(db, 'trips', targetId, 'history'));
         await setDoc(historyRef, {
           days: data,
           timestamp: new Date().toISOString(),
@@ -885,6 +1212,7 @@ export default function App() {
         setItinerary(data.days);
         setTripTitle(data.title || 'Arizona 2026');
         setTripDates(data.dates || 'May 14 - May 19');
+        setShortlist(data.shortlist || []);
       } else if (currentTripId === 'main') {
         // Only initialize if we have a user and they are an admin
         if (auth.currentUser && isAdmin) {
@@ -904,13 +1232,13 @@ export default function App() {
 
     // Sync History
     const historyCollection = collection(db, 'trips', currentTripId, 'history');
-    const unsubscribeHistory = onSnapshot(historyCollection, (snapshot) => {
+    const historyQuery = query(historyCollection, orderBy('timestamp', 'desc'), limit(50));
+    const unsubscribeHistory = onSnapshot(historyQuery, (snapshot) => {
       const history = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as any[];
-      // Sort by timestamp descending
-      setDbHistory(history.sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
+      setDbHistory(history);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, `${path}/history`);
     });
@@ -1047,6 +1375,33 @@ export default function App() {
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
     setEditingActivity(null);
+  };
+
+  const handleAddShortlist = (place: any) => {
+    const newShortlist = [...shortlist, { ...place, id: Math.random().toString(36).substr(2, 9), addedAt: new Date().toISOString() }];
+    setShortlist(newShortlist);
+    saveToFirestore(itinerary, tripTitle, tripDates, false, newShortlist);
+  };
+
+  const handleRemoveShortlist = (id: string) => {
+    const newShortlist = shortlist.filter(p => p.id !== id);
+    setShortlist(newShortlist);
+    saveToFirestore(itinerary, tripTitle, tripDates, false, newShortlist);
+  };
+
+  const handleClearHistory = async () => {
+    if (!isAdmin) return;
+    if (!window.confirm('Are you sure you want to clear all version history? This cannot be undone.')) return;
+    
+    try {
+      const historyCollection = collection(db, 'trips', currentTripId, 'history');
+      const snapshot = await getDocs(historyCollection);
+      const batch = writeBatch(db);
+      snapshot.docs.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `trips/${currentTripId}/history`);
+    }
   };
 
   const handleDeleteActivity = () => {
@@ -1217,28 +1572,7 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {view === 'list' && isAdmin && (
-              <>
-                <button 
-                  onClick={() => setShowAiAssistant(!showAiAssistant)}
-                  className={cn(
-                    "p-2 rounded-full transition-all",
-                    showAiAssistant ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600"
-                  )}
-                  title="AI Assistant"
-                >
-                  <Sparkles className="w-5 h-5" />
-                </button>
-                <button 
-                  onClick={handleAddTrip}
-                  className="p-2 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all"
-                  title="Add Trip"
-                >
-                  <Plus className="w-5 h-5" />
-                </button>
-              </>
-            )}
-            {view === 'itinerary' && isAdmin && (
+            {isAdmin && (
               <button 
                 onClick={() => setShowAiAssistant(!showAiAssistant)}
                 className={cn(
@@ -1250,14 +1584,18 @@ export default function App() {
                 <Sparkles className="w-5 h-5" />
               </button>
             )}
-            {itineraryHistory.length > 0 && view === 'itinerary' && isAdmin && (
-              <button 
-                onClick={handleUndo}
-                className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-orange-50 hover:text-orange-600 transition-all"
-                title="Undo last change"
-              >
-                <Undo className="w-5 h-5" />
-              </button>
+            {view === 'itinerary' && isAdmin && (
+              <div className="flex gap-1">
+                {itineraryHistory.length > 0 && (
+                  <button 
+                    onClick={handleUndo}
+                    className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-orange-50 hover:text-orange-600 transition-all"
+                    title="Undo last change"
+                  >
+                    <Undo className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
             )}
             {user ? (
               <div className="relative">
@@ -2001,6 +2339,18 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'places' && (
+            <motion.div key="places" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
+              <PlacesView 
+                itinerary={itinerary}
+                shortlist={shortlist}
+                onAddShortlist={handleAddShortlist}
+                onRemoveShortlist={handleRemoveShortlist}
+                isAdmin={isAdmin}
+              />
+            </motion.div>
+          )}
+
           {activeTab === 'gas' && (
             <motion.div key="gas" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full pb-32">
               <GasPricesView userLoc={userLoc} />
@@ -2134,6 +2484,17 @@ export default function App() {
                   <X className="w-5 h-5 text-slate-400" />
                 </button>
               </div>
+
+              {isAdmin && dbHistory.length > 0 && (
+                <div className="px-6 py-2 bg-slate-50 border-b border-slate-100 flex justify-end">
+                  <button 
+                    onClick={handleClearHistory}
+                    className="text-[10px] font-black text-red-400 hover:text-red-600 uppercase tracking-widest transition-colors flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3" /> Clear All History
+                  </button>
+                </div>
+              )}
               
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
                 {dbHistory.length === 0 ? (
@@ -2211,6 +2572,9 @@ export default function App() {
         <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-around items-center z-50">
           <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")}>
             <Calendar className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Itinerary</span>
+          </button>
+          <button onClick={() => setActiveTab('places')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'places' ? "text-blue-600" : "text-slate-400")}>
+            <MapPin className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Places</span>
           </button>
           <button onClick={() => setActiveTab('gas')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'gas' ? "text-blue-600" : "text-slate-400")}>
             <Fuel className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Gas</span>
