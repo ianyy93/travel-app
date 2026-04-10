@@ -30,6 +30,8 @@ export interface DayPlan {
   events: TripEvent[];
 }
 
+export const TEMPLATE_VERSION = 2; // Increment this when making structural changes to the itinerary
+
 export const ITINERARY_DATA: DayPlan[] = [
   {
     date: "May 14",
@@ -89,7 +91,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         title: "Drive to Grand Canyon",
         description: "Approx. 4 hours drive north. Parking Tip: Aim for Visitor Center Parking Lot 1 or 4 for easiest access to Mather Point.",
         origin: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 },
-        destination: { name: "Grand Canyon South Rim Entrance", lat: 35.9899, lng: -112.1211 }
+        destination: { name: "Mather Point, Grand Canyon Village, AZ 86023", lat: 36.0617, lng: -112.1077 }
       },
       {
         id: "14-5",
@@ -99,7 +101,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "07:30 PM",
         title: "Sunset at Mather Point",
         description: "Short Rim Trail walk. Parking: Use Visitor Center Parking Lot 1 (closest) or Lot 4. Dog-friendly area.",
-        location: { name: "Mather Point", lat: 36.0617, lng: -112.1077 }
+        location: { name: "Mather Point, Grand Canyon Village, AZ 86023", lat: 36.0617, lng: -112.1077 }
       },
       {
         id: "14-6",
@@ -108,8 +110,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "07:45 PM",
         endTime: "08:15 PM",
         title: "Drive to Camp",
-        origin: { name: "Mather Point", lat: 36.0617, lng: -112.1077 },
-        destination: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 }
+        origin: { name: "Mather Point, Grand Canyon Village, AZ 86023", lat: 36.0617, lng: -112.1077 },
+        destination: { name: "Under Canvas Grand Canyon, 979 Airfield Dr, Williams, AZ 86046", lat: 35.8592, lng: -112.1221 }
       },
       {
         id: "14-7",
@@ -118,7 +120,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "08:30 PM",
         title: "Dinner at Camp",
         description: "On-site dining at Under Canvas. Seasonal, locally sourced menu. S'mores by the fire afterwards.",
-        location: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 }
+        location: { name: "Under Canvas Grand Canyon, 979 Airfield Dr, Williams, AZ 86046", lat: 35.8592, lng: -112.1221 }
       },
       {
         id: "14-8",
@@ -127,7 +129,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "09:30 PM",
         title: "Stay: Under Canvas Grand Canyon",
         description: "Glamping experience near the South Rim.",
-        location: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 }
+        location: { name: "Under Canvas Grand Canyon, 979 Airfield Dr, Williams, AZ 86046", lat: 35.8592, lng: -112.1221 }
       }
     ]
   },
@@ -143,7 +145,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "07:00 AM",
         title: "Slow Morning at Camp",
         description: "Coffee + relax. Take photos around the tent and enjoy the morning scenery.",
-        location: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 }
+        location: { name: "Under Canvas Grand Canyon, 979 Airfield Dr, Williams, AZ 86046", lat: 35.8592, lng: -112.1221 }
       },
       {
         id: "15-0b",
@@ -153,8 +155,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "07:30 AM",
         title: "Drive to Park",
         description: "Head to Visitor Center parking. Check for availability in Lot 1 or 4.",
-        origin: { name: "Under Canvas Grand Canyon", lat: 35.8592, lng: -112.1221 },
-        destination: { name: "Grand Canyon Visitor Center Parking", lat: 36.0591, lng: -112.1093 }
+        origin: { name: "Under Canvas Grand Canyon, 979 Airfield Dr, Williams, AZ 86046", lat: 35.8592, lng: -112.1221 },
+        destination: { name: "Grand Canyon Visitor Center, South Rim, 450 Mather Point Rd, Grand Canyon Village, AZ 86023", lat: 36.0591, lng: -112.1093 }
       },
       {
         id: "15-1",
@@ -164,11 +166,11 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "11:30 AM",
         title: "Rim Trail Walk",
         description: "Visitor Center Parking → Mather Point → Yavapai Point → Back to Visitor Center. Dog-friendly trail.",
-        origin: { name: "Grand Canyon Visitor Center Parking", lat: 36.0591, lng: -112.1093 },
-        destination: { name: "Grand Canyon Visitor Center Parking", lat: 36.0591, lng: -112.1093 },
+        origin: { name: "Grand Canyon Visitor Center, South Rim, 450 Mather Point Rd, Grand Canyon Village, AZ 86023", lat: 36.0591, lng: -112.1093 },
+        destination: { name: "Grand Canyon Visitor Center, South Rim, 450 Mather Point Rd, Grand Canyon Village, AZ 86023", lat: 36.0591, lng: -112.1093 },
         waypoints: [
-          { name: "Mather Point", lat: 36.0617, lng: -112.1077 },
-          { name: "Yavapai Point", lat: 36.0661, lng: -112.1173 }
+          { name: "Mather Point, Grand Canyon Village, AZ 86023", lat: 36.0617, lng: -112.1077 },
+          { name: "Yavapai Point, Grand Canyon Village, AZ 86023", lat: 36.0661, lng: -112.1173 }
         ]
       },
       {
@@ -192,8 +194,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "12:30 PM",
         endTime: "12:45 PM",
         title: "Desert View Drive",
-        origin: { name: "Grand Canyon Visitor Center Parking", lat: 36.0591, lng: -112.1093 },
-        destination: { name: "Grandview Point", lat: 35.9984, lng: -111.9872 }
+        origin: { name: "Grand Canyon Visitor Center, South Rim, 450 Mather Point Rd, Grand Canyon Village, AZ 86023", lat: 36.0591, lng: -112.1093 },
+        destination: { name: "Grandview Point, Grand Canyon Village, AZ 86023", lat: 35.9984, lng: -111.9872 }
       },
       {
         id: "15-3",
@@ -202,7 +204,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "12:45 PM",
         endTime: "01:00 PM",
         title: "Grandview Point",
-        location: { name: "Grandview Point", lat: 35.9984, lng: -111.9872 }
+        location: { name: "Grandview Point, Grand Canyon Village, AZ 86023", lat: 35.9984, lng: -111.9872 }
       },
       {
         id: "15-4",
@@ -211,8 +213,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "01:00 PM",
         endTime: "01:10 PM",
         title: "Drive to Moran Point",
-        origin: { name: "Grandview Point", lat: 35.9984, lng: -111.9872 },
-        destination: { name: "Moran Point", lat: 36.0048, lng: -111.9241 }
+        origin: { name: "Grandview Point, Grand Canyon Village, AZ 86023", lat: 35.9984, lng: -111.9872 },
+        destination: { name: "Moran Point, Grand Canyon Village, AZ 86023", lat: 36.0048, lng: -111.9241 }
       },
       {
         id: "15-5",
@@ -221,7 +223,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "01:10 PM",
         endTime: "01:25 PM",
         title: "Moran Point",
-        location: { name: "Moran Point", lat: 36.0048, lng: -111.9241 }
+        location: { name: "Moran Point, Grand Canyon Village, AZ 86023", lat: 36.0048, lng: -111.9241 }
       },
       {
         id: "15-6",
@@ -230,8 +232,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "01:25 PM",
         endTime: "01:35 PM",
         title: "Drive to Lipan Point",
-        origin: { name: "Moran Point", lat: 36.0048, lng: -111.9241 },
-        destination: { name: "Lipan Point", lat: 36.0328, lng: -111.8524 }
+        origin: { name: "Moran Point, Grand Canyon Village, AZ 86023", lat: 36.0048, lng: -111.9241 },
+        destination: { name: "Lipan Point, Grand Canyon Village, AZ 86023", lat: 36.0328, lng: -111.8524 }
       },
       {
         id: "15-7",
@@ -240,7 +242,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "01:35 PM",
         endTime: "01:50 PM",
         title: "Lipan Point",
-        location: { name: "Lipan Point", lat: 36.0328, lng: -111.8524 }
+        location: { name: "Lipan Point, Grand Canyon Village, AZ 86023", lat: 36.0328, lng: -111.8524 }
       },
       {
         id: "15-8",
@@ -249,8 +251,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "01:50 PM",
         endTime: "02:00 PM",
         title: "Drive to Navajo Point",
-        origin: { name: "Lipan Point", lat: 36.0328, lng: -111.8524 },
-        destination: { name: "Navajo Point", lat: 36.0361, lng: -111.8344 }
+        origin: { name: "Lipan Point, Grand Canyon Village, AZ 86023", lat: 36.0328, lng: -111.8524 },
+        destination: { name: "Navajo Point, Grand Canyon Village, AZ 86023", lat: 36.0361, lng: -111.8344 }
       },
       {
         id: "15-9",
@@ -259,7 +261,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "02:00 PM",
         endTime: "02:15 PM",
         title: "Navajo Point",
-        location: { name: "Navajo Point", lat: 36.0361, lng: -111.8344 }
+        location: { name: "Navajo Point, Grand Canyon Village, AZ 86023", lat: 36.0361, lng: -111.8344 }
       },
       {
         id: "15-10",
@@ -268,8 +270,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "02:15 PM",
         endTime: "02:25 PM",
         title: "Drive to Watchtower",
-        origin: { name: "Navajo Point", lat: 36.0361, lng: -111.8344 },
-        destination: { name: "Desert View Watchtower", lat: 36.0412, lng: -111.8268 }
+        origin: { name: "Navajo Point, Grand Canyon Village, AZ 86023", lat: 36.0361, lng: -111.8344 },
+        destination: { name: "Desert View Watchtower, Grand Canyon Village, AZ 86023", lat: 36.0412, lng: -111.8268 }
       },
       {
         id: "15-11",
@@ -279,7 +281,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "03:00 PM",
         title: "Desert View Watchtower",
         description: "Large lot available at Desert View area.",
-        location: { name: "Desert View Watchtower", lat: 36.0412, lng: -111.8268 }
+        location: { name: "Desert View Watchtower, Grand Canyon Village, AZ 86023", lat: 36.0412, lng: -111.8268 }
       },
       {
         id: "15-12",
@@ -289,8 +291,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "07:00 PM",
         title: "Drive to Scottsdale",
         description: "Approx. 4 hours drive south.",
-        origin: { name: "Desert View Watchtower", lat: 36.0412, lng: -111.8268 },
-        destination: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        origin: { name: "Desert View Watchtower, Grand Canyon National Park, AZ", lat: 36.0412, lng: -111.8268 },
+        destination: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "15-12b",
@@ -299,7 +301,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "07:30 PM",
         title: "Dinner in Scottsdale",
         description: "Try 'Proof' at the Four Seasons for an American canteen experience.",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "15-13",
@@ -308,7 +310,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "08:30 PM",
         title: "Stay: Four Seasons Scottsdale",
         description: "Check-in at Troon North.",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       }
     ]
   },
@@ -323,7 +325,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "08:00 AM",
         title: "Breakfast at Resort",
         description: "Relaxed breakfast at the Four Seasons.",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "16-1",
@@ -333,7 +335,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "11:30 AM",
         title: "Pinnacle Peak Park",
         description: "Hiking with the dog. Parking: Dedicated lot at the trailhead.",
-        location: { name: "Pinnacle Peak Park", lat: 33.7275, lng: -111.8519 }
+        location: { name: "Pinnacle Peak Park, Scottsdale, AZ", lat: 33.7275, lng: -111.8519 }
       },
       {
         id: "16-2",
@@ -342,8 +344,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "11:30 AM",
         endTime: "11:45 AM",
         title: "Return to Resort",
-        origin: { name: "Pinnacle Peak Park", lat: 33.7275, lng: -111.8519 },
-        destination: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        origin: { name: "Pinnacle Peak Park, Scottsdale, AZ", lat: 33.7275, lng: -111.8519 },
+        destination: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "16-2b",
@@ -352,7 +354,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "12:30 PM",
         title: "Poolside Lunch",
         description: "Casual lunch by the pool at the resort.",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "16-3",
@@ -362,7 +364,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "05:00 PM",
         title: "Resort Time",
         description: "Pool and spa at Four Seasons.",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "16-4",
@@ -371,8 +373,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "05:30 PM",
         endTime: "06:00 PM",
         title: "Drive to Old Town",
-        origin: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 },
-        destination: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 }
+        origin: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 },
+        destination: { name: "Old Town Scottsdale, AZ", lat: 33.4932, lng: -111.9261 }
       },
       {
         id: "16-5",
@@ -382,7 +384,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "08:00 PM",
         title: "Old Town Scottsdale",
         description: "Exploring art galleries and shops. Parking: Multiple free public parking garages available.",
-        location: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 }
+        location: { name: "Old Town Scottsdale, AZ", lat: 33.4932, lng: -111.9261 }
       },
       {
         id: "16-5b",
@@ -391,7 +393,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "08:00 PM",
         title: "Dinner in Old Town",
         description: "Try 'The Mission' for modern Latin cuisine or 'Olive & Ivy' for Mediterranean.",
-        location: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 }
+        location: { name: "Old Town Scottsdale, AZ", lat: 33.4932, lng: -111.9261 }
       },
       {
         id: "16-6",
@@ -400,8 +402,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "09:30 PM",
         endTime: "10:00 PM",
         title: "Return to Resort",
-        origin: { name: "Old Town Scottsdale", lat: 33.4932, lng: -111.9261 },
-        destination: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        origin: { name: "Old Town Scottsdale, AZ", lat: 33.4932, lng: -111.9261 },
+        destination: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "16-7",
@@ -409,7 +411,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         category: 'stay',
         startTime: "10:30 PM",
         title: "Stay: Four Seasons Scottsdale",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       }
     ]
   },
@@ -424,7 +426,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "07:00 AM",
         title: "Early Breakfast",
         description: "Quick bite before heading to Sedona.",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "17-2",
@@ -434,18 +436,38 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "10:00 AM",
         title: "Drive to Sedona",
         description: "Approx. 2 hours drive.",
-        origin: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 },
-        destination: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
+        origin: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 },
+        destination: { name: "Cathedral Rock Trailhead, Sedona, AZ 86336", lat: 34.8252, lng: -111.7885 }
       },
       {
         id: "17-3",
         type: 'activity',
         category: 'activity',
         startTime: "10:00 AM",
+        endTime: "11:30 AM",
+        title: "Cathedral Rock",
+        description: "One of Sedona's most iconic vortex sites. Parking: Very limited, use Sedona Shuttle if needed.",
+        location: { name: "Cathedral Rock Trailhead, Sedona, AZ 86336", lat: 34.8252, lng: -111.7885 }
+      },
+      {
+        id: "17-3-1",
+        type: 'travel',
+        category: 'drive',
+        startTime: "11:30 AM",
+        endTime: "11:45 AM",
+        title: "Drive to Bell Rock",
+        origin: { name: "Cathedral Rock Trailhead, Sedona, AZ 86336", lat: 34.8252, lng: -111.7885 },
+        destination: { name: "Bell Rock Trailhead, Sedona, AZ 86336", lat: 34.8058, lng: -111.7664 }
+      },
+      {
+        id: "17-3-2",
+        type: 'activity',
+        category: 'activity',
+        startTime: "11:45 AM",
         endTime: "01:00 PM",
-        title: "Sedona Highlights",
-        description: "Cathedral Rock, Bell Rock. Parking: Sedona lots fill up early! Use the Sedona Shuttle if needed.",
-        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
+        title: "Bell Rock",
+        description: "Easy to moderate hiking around this massive red rock formation.",
+        location: { name: "Bell Rock Trailhead, Sedona, AZ 86336", lat: 34.8058, lng: -111.7664 }
       },
       {
         id: "17-3b",
@@ -455,17 +477,47 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "02:00 PM",
         title: "Lunch in Sedona",
         description: "Try 'The Hudson' for great views or 'Elote Cafe' (if you can get a spot) for upscale Mexican.",
-        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
+        location: { name: "Sedona, AZ 86336", lat: 34.8697, lng: -111.7610 }
       },
       {
-        id: "17-3c",
+        id: "17-3-3",
+        type: 'travel',
+        category: 'drive',
+        startTime: "02:00 PM",
+        endTime: "02:15 PM",
+        title: "Drive to Chapel of the Holy Cross",
+        origin: { name: "Sedona, AZ 86336", lat: 34.8697, lng: -111.7610 },
+        destination: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ 86336", lat: 34.8320, lng: -111.7667 }
+      },
+      {
+        id: "17-3-4",
         type: 'activity',
         category: 'activity',
-        startTime: "02:00 PM",
+        startTime: "02:15 PM",
+        endTime: "03:00 PM",
+        title: "Chapel of the Holy Cross",
+        description: "Stunning chapel built into the red rocks.",
+        location: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ 86336", lat: 34.8320, lng: -111.7667 }
+      },
+      {
+        id: "17-3-5",
+        type: 'travel',
+        category: 'drive',
+        startTime: "03:00 PM",
+        endTime: "03:15 PM",
+        title: "Drive to Tlaquepaque",
+        origin: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ 86336", lat: 34.8320, lng: -111.7667 },
+        destination: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ 86336", lat: 34.8617, lng: -111.7635 }
+      },
+      {
+        id: "17-3-6",
+        type: 'activity',
+        category: 'activity',
+        startTime: "03:15 PM",
         endTime: "04:30 PM",
-        title: "More Sedona",
-        description: "Chapel of the Holy Cross and Tlaquepaque Arts & Shopping Village.",
-        location: { name: "Sedona", lat: 34.8697, lng: -111.7610 }
+        title: "Tlaquepaque Arts & Shopping Village",
+        description: "Authentic Mexican-style village with art galleries and craft shops.",
+        location: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ 86336", lat: 34.8617, lng: -111.7635 }
       },
       {
         id: "17-4",
@@ -474,8 +526,8 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "04:30 PM",
         endTime: "06:30 PM",
         title: "Return to Scottsdale",
-        origin: { name: "Sedona", lat: 34.8697, lng: -111.7610 },
-        destination: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        origin: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ 86336", lat: 34.8617, lng: -111.7635 },
+        destination: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "17-4b",
@@ -484,7 +536,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "07:30 PM",
         title: "Dinner at Resort",
         description: "Relaxing dinner after the day trip.",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "17-5",
@@ -492,7 +544,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         category: 'stay',
         startTime: "08:30 PM",
         title: "Stay: Four Seasons Scottsdale",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       }
     ]
   },
@@ -506,7 +558,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         category: 'food',
         startTime: "09:00 AM",
         title: "Leisurely Breakfast",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "18-1",
@@ -516,7 +568,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "01:00 PM",
         title: "Relax at Four Seasons",
         description: "Pool time or short walk.",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "18-1b",
@@ -524,7 +576,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         category: 'food',
         startTime: "01:00 PM",
         title: "Lunch",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "18-1c",
@@ -534,7 +586,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         endTime: "06:00 PM",
         title: "Optional Exploring",
         description: "Visit Taliesin West or Scottsdale Quarter.",
-        location: { name: "Scottsdale", lat: 33.4942, lng: -111.9261 }
+        location: { name: "Scottsdale, AZ", lat: 33.4942, lng: -111.9261 }
       },
       {
         id: "18-1d",
@@ -543,7 +595,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "07:30 PM",
         title: "Farewell Dinner",
         description: "Celebrate the last night in Arizona.",
-        location: { name: "Scottsdale", lat: 33.4942, lng: -111.9261 }
+        location: { name: "Scottsdale, AZ", lat: 33.4942, lng: -111.9261 }
       },
       {
         id: "18-2",
@@ -551,7 +603,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         category: 'stay',
         startTime: "09:00 PM",
         title: "Stay: Four Seasons Scottsdale",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       }
     ]
   },
@@ -565,7 +617,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         category: 'food',
         startTime: "08:00 AM",
         title: "Final Breakfast",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "19-1",
@@ -574,7 +626,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "09:30 AM",
         endTime: "10:00 AM",
         title: "Check out",
-        location: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
       },
       {
         id: "19-2",
@@ -583,7 +635,7 @@ export const ITINERARY_DATA: DayPlan[] = [
         startTime: "10:00 AM",
         endTime: "10:30 AM",
         title: "Drive to Airport",
-        origin: { name: "Four Seasons Scottsdale", lat: 33.7247, lng: -111.8542 },
+        origin: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 },
         destination: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 }
       },
       {

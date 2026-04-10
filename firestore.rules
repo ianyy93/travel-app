@@ -18,6 +18,11 @@ service cloud.firestore {
       // Allow anyone to view public trips, but only admins can edit
       allow get, list: if true;
       allow write: if isAdmin() && isValidItinerary(request.resource.data);
+
+      match /history/{historyId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
     }
     
     match /users/{userId} {

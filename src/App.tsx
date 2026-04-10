@@ -16,6 +16,7 @@ import {
   Moon, 
   Dog,
   ArrowRight,
+  ArrowLeft,
   Clock,
   ExternalLink,
   Edit2,
@@ -40,13 +41,15 @@ import {
   Wand2,
   MessageSquare,
   MapIcon,
-  Navigation
+  Navigation,
+  History
 } from 'lucide-react';
 import { 
   ITINERARY_DATA, 
   FLIGHT_DETAILS, 
   RENTAL_DETAILS, 
   GAS_STATIONS, 
+  TEMPLATE_VERSION,
   DayPlan, 
   TripEvent,
   TripCategory,
@@ -121,19 +124,17 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 // --- Components ---
 
 const getAppleMapsUrl = (loc: Location) => 
-  `http://maps.apple.com/?q=${encodeURIComponent(loc.name)}&ll=${loc.lat},${loc.lng}`;
+  `https://maps.apple.com/?q=${encodeURIComponent(loc.name)}&ll=${loc.lat},${loc.lng}&t=m`;
 
 const getGoogleMapsUrl = (loc: Location) => 
   `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`;
 
 const getDayRouteUrl = (events: TripEvent[], provider: 'apple' | 'google') => {
-  // Collect all unique locations for the day (excluding flights and hidden events)
+  // Collect all unique locations from non-hidden activities (excluding flights)
+  // We ignore travel origin/destination to ensure consistency with the activities they connect
   const locations = events
-    .filter(e => e.category !== 'flight' && !e.hidden)
-    .flatMap(e => {
-      if (e.type === 'travel') return [e.origin, e.destination];
-      return [e.location];
-    })
+    .filter(e => e.type === 'activity' && e.category !== 'flight' && !e.hidden)
+    .map(e => e.location)
     .filter((loc): loc is Location => !!loc);
 
   if (locations.length < 2) return null;
@@ -155,9 +156,12 @@ const getDayRouteUrl = (events: TripEvent[], provider: 'apple' | 'google') => {
   const waypoints = uniquePoints.slice(1, -1);
 
   if (provider === 'apple') {
-    let url = `http://maps.apple.com/?saddr=${origin.lat},${origin.lng}&daddr=${destination.lat},${destination.lng}&dirflg=d`;
+    // Using specific names and coordinate hinting for Apple Maps
+    const saddr = encodeURIComponent(origin.name);
+    const daddr = encodeURIComponent(destination.name);
+    let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${destination.lat},${destination.lng}&dirflg=d`;
     if (waypoints.length > 0) {
-      url += `&to=${waypoints.map(w => `${w.lat},${w.lng}`).join("&to=")}`;
+      url += `&to=${waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
     }
     return url;
   } else {
@@ -254,7 +258,14 @@ const GasPricesView = ({ userLoc }: { userLoc: [number, number] | null }) => {
                 <div className="text-right flex flex-col gap-2">
                   <p className="text-lg font-black text-slate-900">{item.regular}</p>
                   <div className="flex gap-1">
-                    <a href={`http://maps.apple.com/?q=${encodeURIComponent(item.name)}&ll=${item.lat},${item.lng}`} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><Navigation className="w-3 h-3" /></a>
+                    <a 
+                      href={getAppleMapsUrl({ name: item.name, lat: item.lat, lng: item.lng })} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="p-1.5 bg-slate-100 rounded-lg text-slate-600"
+                    >
+                      <Navigation className="w-3 h-3" />
+                    </a>
                     <a href={`https://www.google.com/maps/search/?api=1&query=${item.lat},${item.lng}`} target="_blank" rel="noreferrer" className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><MapIcon className="w-3 h-3" /></a>
                   </div>
                 </div>
@@ -542,22 +553,33 @@ export default function App() {
   const [tripTitle, setTripTitle] = useState('Arizona 2026');
   const [tripDates, setTripDates] = useState('May 14 - May 21');
   const [itineraryHistory, setItineraryHistory] = useState<DayPlan[][]>([]);
+  const [dbHistory, setDbHistory] = useState<{id: string, days: DayPlan[], timestamp: string, updatedBy: string}[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [aiProposal, setAiProposal] = useState<GeminiProposal | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+
+  const [activeFilter, setActiveFilter] = useState<string>('all');
 
   const isAdmin = useMemo(() => {
     const admins = ['ianyy93@gmail.com', 'wingin.carrie@gmail.com'];
     return user && admins.includes(user.email || '');
   }, [user]);
   
-  const handleUndo = () => {
-    if (itineraryHistory.length === 0) return;
-    const previous = itineraryHistory[itineraryHistory.length - 1];
-    setItinerary(previous);
-    setItineraryHistory(prev => prev.slice(0, -1));
-    saveToFirestore(previous);
+  const handleUndo = async () => {
+    if (itineraryHistory.length > 0) {
+      const prev = itineraryHistory[itineraryHistory.length - 1];
+      setItinerary(prev);
+      setItineraryHistory(prevHistory => prevHistory.slice(0, -1));
+      saveToFirestore(prev);
+    } else if (dbHistory.length > 1) {
+      // If local history is empty, try pulling from DB history
+      // dbHistory[0] is current, dbHistory[1] is previous
+      const prev = dbHistory[1].days;
+      setItinerary(prev);
+      saveToFirestore(prev);
+    }
   };
 
   const handleAiAction = async () => {
@@ -585,7 +607,7 @@ export default function App() {
     setShowAiAssistant(false);
   };
 
-  const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string) => {
+  const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string, isAutoSync = false) => {
     if (!auth.currentUser) return;
     if (!isAdmin) {
       console.error("Unauthorized: You do not have permission to save changes.");
@@ -593,14 +615,30 @@ export default function App() {
     }
     const path = `trips/${currentTripId}`;
     const tripDoc = doc(db, 'trips', currentTripId);
+    
     try {
+      // If this is a structural update or manual save, we might want to record history
+      // For now, let's just save the main document
       await setDoc(tripDoc, { 
         days: data,
         title: title || tripTitle,
         dates: dates || tripDates,
+        templateVersion: TEMPLATE_VERSION,
         lastUpdated: new Date().toISOString(),
-        updatedBy: auth.currentUser.email
-      });
+        updatedBy: auth.currentUser.email,
+        isAutoSync
+      }, { merge: true });
+
+      // Record history for manual changes (not auto-syncs)
+      if (!isAutoSync) {
+        const historyRef = doc(collection(db, 'trips', currentTripId, 'history'));
+        await setDoc(historyRef, {
+          days: data,
+          timestamp: new Date().toISOString(),
+          updatedBy: auth.currentUser.email,
+          title: title || tripTitle
+        });
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, path);
     }
@@ -711,6 +749,10 @@ export default function App() {
   };
 
   const handleDeleteTrip = async (tripId: string) => {
+    if (!isAdmin) {
+      setLoginError("You do not have permission to delete trips.");
+      return;
+    }
     if (!window.confirm('Are you sure you want to delete this trip?')) return;
     
     try {
@@ -821,6 +863,25 @@ export default function App() {
     const unsubscribeSync = onSnapshot(tripDoc, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
+        
+        // Auto-sync logic: If template version in DB is older than code, update it
+        const dbVersion = data.templateVersion || 0;
+        if (dbVersion < TEMPLATE_VERSION && isAdmin) {
+          console.log(`Auto-syncing itinerary from version ${dbVersion} to ${TEMPLATE_VERSION}`);
+          
+          // Save current state to history before overwriting
+          const historyRef = doc(collection(db, 'trips', currentTripId, 'history'));
+          setDoc(historyRef, {
+            days: data.days,
+            timestamp: new Date().toISOString(),
+            updatedBy: 'System (Auto-Sync)',
+            title: data.title,
+            isAutoBackup: true
+          }).then(() => {
+            saveToFirestore(ITINERARY_DATA, data.title, data.dates, true);
+          });
+        }
+
         setItinerary(data.days);
         setTripTitle(data.title || 'Arizona 2026');
         setTripDates(data.dates || 'May 14 - May 19');
@@ -831,6 +892,7 @@ export default function App() {
             days: ITINERARY_DATA,
             title: 'Arizona 2026',
             dates: 'May 14 - May 19',
+            templateVersion: TEMPLATE_VERSION,
             lastUpdated: new Date().toISOString(),
             updatedBy: auth.currentUser.email
           }).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
@@ -840,9 +902,23 @@ export default function App() {
       handleFirestoreError(error, OperationType.GET, path);
     });
 
+    // Sync History
+    const historyCollection = collection(db, 'trips', currentTripId, 'history');
+    const unsubscribeHistory = onSnapshot(historyCollection, (snapshot) => {
+      const history = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as any[];
+      // Sort by timestamp descending
+      setDbHistory(history.sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `${path}/history`);
+    });
+
     return () => {
       unsubscribeAuth();
       unsubscribeSync();
+      unsubscribeHistory();
     };
   }, [currentTripId, isAdmin]);
 
@@ -956,7 +1032,6 @@ export default function App() {
 
   const handleUpdateActivity = (updated: TripEvent) => {
     if (!editingActivity) return;
-    const isAdmin = user?.email === 'ianyy93@gmail.com';
     if (!isAdmin) {
       setLoginError("You do not have permission to edit this itinerary.");
       setEditingActivity(null);
@@ -976,7 +1051,6 @@ export default function App() {
 
   const handleDeleteActivity = () => {
     if (!editingActivity || editingActivity.actIdx === null) return;
-    const isAdmin = user?.email === 'ianyy93@gmail.com';
     if (!isAdmin) {
       setLoginError("You do not have permission to edit this itinerary.");
       setEditingActivity(null);
@@ -1117,21 +1191,31 @@ export default function App() {
       {/* Header */}
       <header className="px-6 pt-6 pb-4 bg-white border-b border-slate-100 shrink-0 z-40">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-            {view === 'list' ? 'My Trips' : (
-              isEditing ? (
-                <input 
-                  type="text"
-                  value={tripTitle}
-                  onChange={(e) => {
-                    setTripTitle(e.target.value);
-                    saveToFirestore(itinerary, e.target.value, tripDates);
-                  }}
-                  className="bg-transparent border-none p-0 focus:ring-0 w-full"
-                />
-              ) : tripTitle
+          <div className="flex items-center gap-3 min-w-0">
+            {view === 'itinerary' && (
+              <button 
+                onClick={() => setView('list')}
+                className="p-2 -ml-2 bg-slate-50 text-slate-600 rounded-full hover:bg-blue-50 hover:text-blue-600 transition-colors"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
             )}
-          </h1>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight truncate">
+              {view === 'list' ? 'My Trips' : (
+                isEditing ? (
+                  <input 
+                    type="text"
+                    value={tripTitle}
+                    onChange={(e) => {
+                      setTripTitle(e.target.value);
+                      saveToFirestore(itinerary, e.target.value, tripDates);
+                    }}
+                    className="bg-transparent border-none p-0 focus:ring-0 w-full"
+                  />
+                ) : tripTitle
+              )}
+            </h1>
+          </div>
           <div className="flex items-center gap-2">
             {view === 'list' && isAdmin && (
               <>
@@ -1399,21 +1483,49 @@ export default function App() {
         <>
           {/* Day Tabs */}
           {activeTab === 'itinerary' && (
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide py-2 px-6">
-              {itinerary.map((day, i) => (
-                <button
-                  key={i}
-                  onClick={() => setActiveDayIdx(i)}
-                  className={cn(
-                    "flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold transition-all",
-                    activeDayIdx === i 
-                      ? "bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105" 
-                      : "bg-slate-100 text-slate-500"
-                  )}
-                >
-                  {day.date}
-                </button>
-              ))}
+            <div className="space-y-2">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide py-2 px-6">
+                {itinerary.map((day, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setActiveDayIdx(i)}
+                    className={cn(
+                      "flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold transition-all",
+                      activeDayIdx === i 
+                        ? "bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105" 
+                        : "bg-slate-100 text-slate-500"
+                    )}
+                  >
+                    {day.date}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Filter Pills */}
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide px-6 pb-2">
+                {[
+                  { id: 'all', label: 'All', icon: <Check className="w-3 h-3" /> },
+                  { id: 'activity', label: 'Activities', icon: <Sun className="w-3 h-3" /> },
+                  { id: 'food', label: 'Meals', icon: <Utensils className="w-3 h-3" /> },
+                  { id: 'travel', label: 'Travel', icon: <Car className="w-3 h-3" /> },
+                  { id: 'flight', label: 'Flights', icon: <Plane className="w-3 h-3" /> },
+                  { id: 'stay', label: 'Stay', icon: <Moon className="w-3 h-3" /> },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setActiveFilter(f.id)}
+                    className={cn(
+                      "flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border",
+                      activeFilter === f.id 
+                        ? "bg-slate-900 text-white border-slate-900 shadow-sm" 
+                        : "bg-white text-slate-400 border-slate-100 hover:border-slate-200"
+                    )}
+                  >
+                    {f.icon}
+                    {f.label}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1426,79 +1538,207 @@ export default function App() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="p-6 pb-32"
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              onDragEnd={(_, info) => {
+                if (info.offset.x > 100) {
+                  if (activeDayIdx > 0) {
+                    setActiveDayIdx(activeDayIdx - 1);
+                  } else {
+                    setView('list');
+                  }
+                } else if (info.offset.x < -100) {
+                  if (activeDayIdx < itinerary.length - 1) {
+                    setActiveDayIdx(activeDayIdx + 1);
+                  }
+                }
+              }}
+              className="pb-32"
             >
-              <div className="mb-6 flex justify-between items-start">
-                <div>
-                  {isEditing ? (
-                    <input 
-                      type="text"
-                      value={activeDay.title}
-                      onChange={(e) => {
-                        const newItinerary = [...itinerary];
-                        newItinerary[activeDayIdx].title = e.target.value;
-                        setItinerary(newItinerary);
-                        saveToFirestore(newItinerary);
-                      }}
-                      className="text-xl font-bold text-slate-900 bg-transparent border-none p-0 focus:ring-0 w-full"
-                    />
-                  ) : (
-                    <h2 className="text-xl font-bold text-slate-900">{activeDay.title}</h2>
-                  )}
-                  {isEditing ? (
-                    <input 
-                      type="text"
-                      value={activeDay.date}
-                      onChange={(e) => {
-                        const newItinerary = [...itinerary];
-                        newItinerary[activeDayIdx].date = e.target.value;
-                        setItinerary(newItinerary);
-                        saveToFirestore(newItinerary);
-                      }}
-                      className="text-sm text-slate-500 bg-transparent border-none p-0 focus:ring-0 w-full"
-                    />
-                  ) : (
-                    <p className="text-sm text-slate-500">Day {activeDayIdx + 1} • {activeDay.date}</p>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <a 
-                    href={getDayRouteUrl(activeDay.events, 'apple') || '#'} 
-                    target="_blank" 
-                    rel="noreferrer"
-                    className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                    title="Apple Maps Route"
-                  >
-                    <Navigation className="w-4 h-4" />
-                  </a>
-                  <a 
-                    href={getDayRouteUrl(activeDay.events, 'google') || '#'} 
-                    target="_blank" 
-                    rel="noreferrer"
-                    className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                    title="Google Maps Route"
-                  >
-                    <MapIcon className="w-4 h-4" />
-                  </a>
+              <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-md px-6 py-4 border-b border-slate-50 mb-6">
+                <div className="flex justify-between items-start">
+                  <div>
+                    {isEditing ? (
+                      <input 
+                        type="text"
+                        value={activeDay.title}
+                        onChange={(e) => {
+                          const newItinerary = [...itinerary];
+                          newItinerary[activeDayIdx].title = e.target.value;
+                          setItinerary(newItinerary);
+                          saveToFirestore(newItinerary);
+                        }}
+                        className="text-xl font-bold text-slate-900 bg-transparent border-none p-0 focus:ring-0 w-full"
+                      />
+                    ) : (
+                      <h2 className="text-xl font-bold text-slate-900">{activeDay.title}</h2>
+                    )}
+                    {isEditing ? (
+                      <input 
+                        type="text"
+                        value={activeDay.date}
+                        onChange={(e) => {
+                          const newItinerary = [...itinerary];
+                          newItinerary[activeDayIdx].date = e.target.value;
+                          setItinerary(newItinerary);
+                          saveToFirestore(newItinerary);
+                        }}
+                        className="text-sm text-slate-500 bg-transparent border-none p-0 focus:ring-0 w-full"
+                      />
+                    ) : (
+                      <p className="text-sm text-slate-500 font-medium">Day {activeDayIdx + 1} • {activeDay.date}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    {isAdmin && (
+                      <div className="flex gap-1">
+                        <button 
+                          onClick={() => setShowHistory(true)}
+                          className="p-2 bg-slate-50 rounded-xl text-slate-400 hover:bg-slate-100 transition-colors"
+                          title="Version History"
+                        >
+                          <History className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (window.confirm('Update itinerary from code template? This fixes location and structure issues but resets manual edits.')) {
+                              setItinerary(ITINERARY_DATA);
+                              saveToFirestore(ITINERARY_DATA);
+                            }
+                          }}
+                          className="p-2 bg-blue-50 rounded-xl text-blue-600 hover:bg-blue-100 transition-colors"
+                          title="Sync with Template"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                    <a 
+                      href={getDayRouteUrl(activeDay.events, 'apple') || '#'} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      title="Apple Maps Route"
+                    >
+                      <Navigation className="w-4 h-4" />
+                    </a>
+                    <a 
+                      href={getDayRouteUrl(activeDay.events, 'google') || '#'} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                      title="Google Maps Route"
+                    >
+                      <MapIcon className="w-4 h-4" />
+                    </a>
+                  </div>
                 </div>
               </div>
 
-              <div className="relative">
+              <div className="px-6">
                 <div className="space-y-4">
-                  {activeDay.events.map((event, idx) => {
-                    const isCurrent = isCurrentEvent(event);
+                  {(() => {
+                    const events = activeDay.events;
+                    const processed: (TripEvent & { isAuto?: boolean; originalIdx?: number })[] = [];
                     
-                    if (event.hidden && event.type === 'travel') return null;
+                    for (let i = 0; i < events.length; i++) {
+                      let current = { ...events[i] };
+                      
+                      // For travel events, ensure they have origin/destination
+                      if (current.type === 'travel') {
+                        // Only auto-fill if not already defined in the data
+                        if (!current.origin) {
+                          // Look at the immediately preceding event
+                          const prev = events[i - 1];
+                          if (prev) {
+                            if (prev.type === 'activity' && prev.location) {
+                              current.origin = prev.location;
+                            } else if (prev.type === 'travel' && prev.destination) {
+                              current.origin = prev.destination;
+                            }
+                          }
+                          
+                          // If still not found, look further back for the last known activity
+                          if (!current.origin) {
+                            for (let j = i - 1; j >= 0; j--) {
+                              if (events[j].type === 'activity' && !events[j].hidden && events[j].location) {
+                                current.origin = events[j].location;
+                                break;
+                              }
+                            }
+                          }
+                        }
 
-                    return (
-                      <div 
-                        key={event.id} 
-                        onClick={() => isEventExpandable(event) && toggleEventExpansion(event.id)}
-                        className={cn(
-                          "relative pl-12 transition-all",
-                          isEventExpandable(event) && "cursor-pointer active:scale-[0.99]"
-                        )}
-                      >
+                        if (!current.destination) {
+                          // Look at the immediately succeeding event
+                          const next = events[i + 1];
+                          if (next) {
+                            if (next.type === 'activity' && next.location) {
+                              current.destination = next.location;
+                            } else if (next.type === 'travel' && next.origin) {
+                              current.destination = next.origin;
+                            }
+                          }
+
+                          // If still not found, look further forward for the next known activity
+                          if (!current.destination) {
+                            for (let j = i + 1; j < events.length; j++) {
+                              if (events[j].type === 'activity' && !events[j].hidden && events[j].location) {
+                                current.destination = events[j].location;
+                                break;
+                              }
+                            }
+                          }
+                        }
+                      }
+
+                      processed.push({ ...current, originalIdx: i });
+
+                      const next = events[i + 1];
+                      if (next && current.type === 'activity' && next.type === 'activity' && !current.hidden && !next.hidden) {
+                        const currentLoc = current.location;
+                        const nextLoc = next.location;
+                        
+                        if (currentLoc && nextLoc && (currentLoc.lat !== nextLoc.lat || currentLoc.lng !== nextLoc.lng)) {
+                          processed.push({
+                            id: `auto-travel-${current.id}-${next.id}`,
+                            type: 'travel',
+                            category: 'drive',
+                            title: `Drive to ${nextLoc.name}`,
+                            origin: currentLoc,
+                            destination: nextLoc,
+                            startTime: current.endTime,
+                            endTime: next.startTime,
+                            isAuto: true
+                          });
+                        }
+                      }
+                    }
+
+                    return processed
+                      .filter(event => {
+                        if (activeFilter === 'all') return true;
+                        if (activeFilter === 'activity') return event.category === 'activity' || event.category === 'walk';
+                        if (activeFilter === 'food') return event.category === 'food';
+                        if (activeFilter === 'travel') return event.type === 'travel' || event.category === 'drive' || event.category === 'transit';
+                        if (activeFilter === 'flight') return event.category === 'flight';
+                        if (activeFilter === 'stay') return event.category === 'stay';
+                        return true;
+                      })
+                      .map((event, idx) => {
+                      const isCurrent = isCurrentEvent(event);
+                      
+                      if (event.hidden && event.type === 'travel') return null;
+
+                      return (
+                        <div 
+                          key={event.id} 
+                          onClick={() => isEventExpandable(event) && toggleEventExpansion(event.id)}
+                          className={cn(
+                            "relative pl-12 transition-all",
+                            isEventExpandable(event) && "cursor-pointer active:scale-[0.99]"
+                          )}
+                        >
                         {/* Icon & Chevron Column */}
                         <div className="absolute left-0 top-1 w-10 flex flex-col items-center gap-1.5 z-10">
                           <div className={cn(
@@ -1601,9 +1841,12 @@ export default function App() {
                                   <a 
                                     href={(() => {
                                       const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
-                                      let url = `http://maps.apple.com/?saddr=${event.origin.lat},${event.origin.lng}&daddr=${event.destination.lat},${event.destination.lng}&dirflg=${mode}`;
+                                      // Using specific names and coordinate hinting for Apple Maps
+                                      const saddr = event.origin ? encodeURIComponent(event.origin.name) : '';
+                                      const daddr = event.destination ? encodeURIComponent(event.destination.name) : '';
+                                      let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${event.destination?.lat},${event.destination?.lng}&dirflg=${mode}`;
                                       if (event.waypoints && event.waypoints.length > 0) {
-                                        url += `&to=${event.waypoints.map(w => `${w.lat},${w.lng}`).join("&to=")}`;
+                                        url += `&to=${event.waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
                                       }
                                       return url;
                                     })()}
@@ -1642,7 +1885,7 @@ export default function App() {
                               </div>
                               <div className="flex gap-1 shrink-0">
                                 <a 
-                                  href={`http://maps.apple.com/?q=${encodeURIComponent(event.location.name)}&ll=${event.location.lat},${event.location.lng}`} 
+                                  href={getAppleMapsUrl(event.location)} 
                                   target="_blank" 
                                   rel="noreferrer"
                                   onClick={(e) => e.stopPropagation()}
@@ -1651,7 +1894,7 @@ export default function App() {
                                   <Navigation className="w-3 h-3" />
                                 </a>
                                 <a 
-                                  href={`https://www.google.com/maps/search/?api=1&query=${event.location.lat},${event.location.lng}`} 
+                                  href={getGoogleMapsUrl(event.location)} 
                                   target="_blank" 
                                   rel="noreferrer"
                                   onClick={(e) => e.stopPropagation()}
@@ -1697,11 +1940,11 @@ export default function App() {
                                         <div className="flex justify-between items-start">
                                           <div className="min-w-0">
                                             <p className="text-xs font-bold text-slate-700 truncate">{sug.name}</p>
-                                            <p className="text-[9px] text-slate-400 truncate">{sug.address}</p>
+                                            <p className="text-[9px] text-slate-400 truncate">{sug.description}</p>
                                           </div>
                                           <div className="flex gap-1 shrink-0 ml-2">
                                             <a 
-                                              href={`http://maps.apple.com/?q=${encodeURIComponent(sug.name)}&ll=${sug.lat},${sug.lng}`}
+                                              href={getAppleMapsUrl(sug)}
                                               target="_blank"
                                               rel="noreferrer"
                                               onClick={(e) => e.stopPropagation()}
@@ -1710,7 +1953,7 @@ export default function App() {
                                               <Navigation className="w-2.5 h-2.5" />
                                             </a>
                                             <a 
-                                              href={`https://www.google.com/maps/search/?api=1&query=${sug.lat},${sug.lng}`}
+                                              href={getGoogleMapsUrl(sug)}
                                               target="_blank"
                                               rel="noreferrer"
                                               onClick={(e) => e.stopPropagation()}
@@ -1730,9 +1973,9 @@ export default function App() {
                         </div>
 
                         {/* Edit Button */}
-                        {isEditing && user?.email === 'ianyy93@gmail.com' && (
+                        {isEditing && isAdmin && event.originalIdx !== undefined && (
                           <button 
-                            onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: idx })}
+                            onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: event.originalIdx! })}
                             className="absolute -top-1 -right-1 p-1.5 bg-blue-600 text-white rounded-full shadow-lg z-20"
                           >
                             <Edit2 className="w-2.5 h-2.5" />
@@ -1740,7 +1983,8 @@ export default function App() {
                         )}
                       </div>
                     );
-                  })}
+                  })
+                })()}
                 </div>
     
                   {isEditing && (
@@ -1831,6 +2075,31 @@ export default function App() {
                     <a href={`tel:${RENTAL_DETAILS.phone}`} className="w-full flex items-center justify-center gap-2 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold">Call Alamo <ExternalLink className="w-4 h-4" /></a>
                   </div>
                 </section>
+
+                {isAdmin && (
+                  <section className="pt-4 border-t border-slate-200">
+                    <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                      <h3 className="text-sm font-bold text-blue-900 mb-1 flex items-center gap-2">
+                        <Sparkles className="w-4 h-4" /> Admin Tools
+                      </h3>
+                      <p className="text-xs text-blue-700 mb-4">
+                        If the itinerary data seems out of sync or you want to reset to the default template, use the button below.
+                      </p>
+                      <button 
+                        onClick={() => {
+                          if (window.confirm('Reset current trip to the default template? This will overwrite any manual changes in Firestore.')) {
+                            setItinerary(ITINERARY_DATA);
+                            saveToFirestore(ITINERARY_DATA);
+                            alert('Itinerary reset to template successfully.');
+                          }
+                        }}
+                        className="w-full py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md active:scale-95 transition-transform"
+                      >
+                        Sync with Template
+                      </button>
+                    </div>
+                  </section>
+                )}
               </div>
             </motion.div>
           )}
@@ -1840,6 +2109,91 @@ export default function App() {
   )}
 
       {/* Modals */}
+      <AnimatePresence>
+        {showHistory && (
+          <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-4 sm:p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowHistory(false)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, y: 100, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 100, scale: 0.95 }}
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-white sticky top-0 z-10">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">Version History</h3>
+                  <p className="text-xs text-slate-400 font-medium">Restore previous versions of your trip</p>
+                </div>
+                <button onClick={() => setShowHistory(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                  <X className="w-5 h-5 text-slate-400" />
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
+                {dbHistory.length === 0 ? (
+                  <div className="text-center py-12">
+                    <History className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+                    <p className="text-slate-400 text-sm">No history found yet.</p>
+                  </div>
+                ) : (
+                  dbHistory.map((version, i) => (
+                    <div 
+                      key={version.id}
+                      className={cn(
+                        "bg-white p-4 rounded-2xl border transition-all",
+                        i === 0 ? "border-blue-200 ring-1 ring-blue-50" : "border-slate-100"
+                      )}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <p className="text-xs font-bold text-slate-700">
+                            {new Date(version.timestamp).toLocaleString()}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-medium">
+                            By {version.updatedBy}
+                          </p>
+                        </div>
+                        {i === 0 ? (
+                          <span className="text-[8px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                            Current
+                          </span>
+                        ) : (
+                          <button 
+                            onClick={() => {
+                              if (window.confirm('Restore this version?')) {
+                                setItinerary(version.days);
+                                saveToFirestore(version.days);
+                                setShowHistory(false);
+                              }
+                            }}
+                            className="text-[10px] font-black text-slate-400 hover:text-blue-600 uppercase tracking-widest bg-slate-50 hover:bg-blue-50 px-3 py-1 rounded-lg border border-slate-100 transition-all"
+                          >
+                            Restore
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex gap-1 overflow-x-auto scrollbar-hide">
+                        {version.days.map((day, dIdx) => (
+                          <div key={dIdx} className="shrink-0 px-2 py-1 bg-slate-50 rounded text-[8px] font-bold text-slate-500 border border-slate-100">
+                            {day.date}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {editingActivity && (
         <EditActivityModal 
           activity={editingActivity.actIdx !== null 
