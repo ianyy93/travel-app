@@ -6,7 +6,14 @@ export interface Location {
 }
 
 export type TripEventType = 'activity' | 'travel';
-export type TripCategory = 'flight' | 'drive' | 'stay' | 'activity' | 'food' | 'walk' | 'transit' | 'logistics';
+export type TripCategory = 'flight' | 'drive' | 'stay' | 'activity' | 'food' | 'walk' | 'transit' | 'logistics' | 'work';
+
+export interface TripMember {
+  id: string;
+  name: string;
+  initials: string;
+  color: string;
+}
 
 export interface TripEvent {
   id: string;
@@ -22,9 +29,12 @@ export interface TripEvent {
   waypoints?: Location[]; // For multi-stop travel
   suggestions?: Location[]; // For meal/activity options
   hidden?: boolean; // For cancelling/hiding events
+  memberIds?: string[]; // IDs of members participating in this event
+  originalIdx?: number; // Internal index for editing
 }
 
 export interface DayPlan {
+  id: number;
   date: string;
   title: string;
   events: TripEvent[];
@@ -34,6 +44,7 @@ export const TEMPLATE_VERSION = 2; // Increment this when making structural chan
 
 export const ITINERARY_DATA: DayPlan[] = [
   {
+    id: 1,
     date: "May 14",
     title: "Arrival & Grand Canyon Drive",
     events: [
@@ -134,6 +145,7 @@ export const ITINERARY_DATA: DayPlan[] = [
     ]
   },
   {
+    id: 2,
     date: "May 15",
     title: "Grand Canyon Exploration",
     events: [
@@ -315,6 +327,7 @@ export const ITINERARY_DATA: DayPlan[] = [
     ]
   },
   {
+    id: 3,
     date: "May 16",
     title: "Scottsdale Relaxation",
     events: [
@@ -416,6 +429,7 @@ export const ITINERARY_DATA: DayPlan[] = [
     ]
   },
   {
+    id: 4,
     date: "May 17",
     title: "Sedona Day Trip",
     events: [
@@ -549,6 +563,7 @@ export const ITINERARY_DATA: DayPlan[] = [
     ]
   },
   {
+    id: 5,
     date: "May 18",
     title: "Final Relax",
     events: [
@@ -608,6 +623,7 @@ export const ITINERARY_DATA: DayPlan[] = [
     ]
   },
   {
+    id: 6,
     date: "May 19",
     title: "Departure",
     events: [
@@ -706,6 +722,27 @@ export const RENTAL_DETAILS = {
   phone: "844-370-9817",
   confirmation: "ALM-992104B"
 };
+
+export const STAY_DETAILS = [
+  {
+    name: "Under Canvas Grand Canyon",
+    location: "Valle, AZ",
+    checkIn: "May 14",
+    checkOut: "May 15",
+    confirmation: "UC-GC-2026-X",
+    phone: "888-496-1700"
+  },
+  {
+    name: "Four Seasons Resort Scottsdale",
+    location: "Scottsdale, AZ",
+    checkIn: "May 15",
+    checkOut: "May 19",
+    confirmation: "FS-SCO-2026-Q",
+    phone: "480-515-5700"
+  }
+];
+
+export const RESTAURANT_DETAILS = [];
 
 export const GAS_STATIONS = [
   { name: "Costco Gas", address: "Phoenix, AZ", lat: 33.4484, lng: -112.0740, regular: "$3.85", brand: "Costco" },

@@ -14,10 +14,20 @@ service cloud.firestore {
       return isAuthenticated() && (request.auth.token.email == "ianyy93@gmail.com" || request.auth.token.email == "wingin.carrie@gmail.com");
     }
 
+    function isValidTravellersSettings(data) {
+      return data.list is list;
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && (settingId != 'travellers' || isValidTravellersSettings(request.resource.data));
+    }
+
     match /trips/{tripId} {
       // Allow anyone to view public trips, but only admins can edit
       allow get, list: if true;
-      allow write: if isAdmin() && isValidItinerary(request.resource.data);
+      allow create, update: if isAdmin() && isValidItinerary(request.resource.data);
+      allow delete: if isAdmin();
 
       match /history/{historyId} {
         allow read: if true;

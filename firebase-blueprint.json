@@ -47,7 +47,7 @@
         "time": { "type": "string" },
         "title": { "type": "string" },
         "description": { "type": "string" },
-        "type": { "type": "string", "enum": ["flight", "drive", "stay", "activity", "food"] },
+        "type": { "type": "string", "enum": ["flight", "drive", "stay", "activity", "food", "work"] },
         "location": {
           "type": "object",
           "properties": {
@@ -58,12 +58,40 @@
         }
       },
       "required": ["title", "type"]
+    },
+    "tripMember": {
+      "title": "Trip Member",
+      "description": "A person travelling on a trip",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "initials": { "type": "string" },
+        "color": { "type": "string" }
+      },
+      "required": ["id", "name", "initials", "color"]
+    },
+    "travellersSettings": {
+      "title": "Travellers Settings",
+      "description": "Master list of travellers",
+      "type": "object",
+      "properties": {
+        "list": {
+          "type": "array",
+          "items": { "$ref": "tripMember" }
+        }
+      },
+      "required": ["list"]
     }
   },
   "firestore": {
     "/trips/{tripId}": {
       "schema": "itinerary",
       "description": "A shared trip itinerary"
+    },
+    "/settings/travellers": {
+      "schema": "travellersSettings",
+      "description": "Master list of travellers for all trips"
     }
   }
 }

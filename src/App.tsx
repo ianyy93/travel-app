@@ -21,6 +21,7 @@ import {
   ExternalLink,
   Edit2,
   Plus,
+  RefreshCw,
   Trash2,
   Save,
   X,
@@ -49,18 +50,25 @@ import {
   Cloud,
   CloudRain,
   Snowflake,
-  CloudLightning
+  CloudLightning,
+  Route,
+  Users,
+  Bookmark,
+  Ticket
 } from 'lucide-react';
 import { 
   ITINERARY_DATA, 
   FLIGHT_DETAILS, 
   RENTAL_DETAILS, 
+  STAY_DETAILS,
+  RESTAURANT_DETAILS,
   GAS_STATIONS, 
   TEMPLATE_VERSION,
   DayPlan, 
   TripEvent,
   TripCategory,
-  Location
+  Location,
+  TripMember
 } from './constants';
 import { cn } from './lib/utils';
 import { db, auth } from './firebase';
@@ -77,8 +85,8 @@ import {
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { weatherService, WeatherInfo } from './services/weatherService';
-import { geminiService, GeminiProposal } from './services/geminiService';
-import { Fuel, Share2, Info as InfoIcon } from 'lucide-react';
+import { geminiService, GeminiProposal, GenerationMode } from './services/geminiService';
+import { Fuel, Share2 } from 'lucide-react';
 
 // Fix Leaflet icon issues
 // @ts-ignore
@@ -294,7 +302,9 @@ const EventIcon = ({ category }: { category: TripCategory }) => {
     case 'food': return <Utensils className="w-4 h-4" />;
     case 'walk': return <MapPin className="w-4 h-4" />;
     case 'transit': return <Bus className="w-4 h-4" />;
-    default: return <Sun className="w-4 h-4" />;
+    case 'work': return <Briefcase className="w-4 h-4" />;
+    case 'activity': return <Sun className="w-4 h-4" />;
+    default: return <Sparkles className="w-4 h-4" />;
   }
 };
 
@@ -353,7 +363,7 @@ const EditActivityModal = ({
       >
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-slate-900">{onDelete ? 'Edit Event' : 'Add Event'}</h3>
-          <button onClick={onClose} className="p-2 bg-slate-100 rounded-full"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="p-2 bg-slate-100 rounded-full" title="Close"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="space-y-4">
@@ -502,6 +512,7 @@ const EditActivityModal = ({
                 <option value="food">Food</option>
                 <option value="walk">Walk</option>
                 <option value="transit">Transit</option>
+                <option value="work">Work</option>
               </select>
             </div>
             <div className="flex flex-col">
@@ -666,9 +677,17 @@ const PlacesView = ({
   const itineraryPlaces = useMemo(() => {
     const places: any[] = [];
     const seen = new Set<string>();
+    const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south', 'dinner', 'lunch', 'breakfast', 'meal', 'brunch', 'food', 'restaurant', 'cafe'];
 
-    const addPlace = (loc: Location, category: string, id: string, dayDate: string) => {
-      const key = `${loc.name}-${loc.lat}-${loc.lng}`;
+    const addPlace = (loc: Location, category: string, id: string, dayDate: string, description?: string) => {
+      if (!loc || !loc.name) return;
+      
+      // Filter out generic neighborhoods/areas/meal-placeholders
+      const lowerName = loc.name.toLowerCase();
+      // If it's just 1-2 words and contains a generic term, it's likely a placeholder
+      if (genericTerms.some(term => lowerName.includes(term) && lowerName.split(' ').length <= 3)) return;
+
+      const key = `${loc.name}-${loc.lat || 0}-${loc.lng || 0}`;
       if (seen.has(key)) return;
       seen.add(key);
       places.push({
@@ -677,13 +696,32 @@ const PlacesView = ({
         category,
         location: loc,
         source: 'itinerary',
-        dayDate
+        dayDate,
+        description: description || loc.description
       });
     };
 
-    const isLogistics = (name: string, eventCat: string) => {
+    const isStay = (name: string | undefined, eventCat: string | undefined) => {
+      if (!name) return false;
       const lowerName = name.toLowerCase();
-      const logisticsKeywords = ['airport', 'rental', 'station', 'terminal', 'gas', 'parking', 'shuttle', 'yyz', 'phx'];
+      const stayKeywords = ['hotel', 'inn', 'suites', 'resort', 'stay', 'airbnb', 'hostel', 'lodge', 'camp', 'glamping', 'villa', 'apartment', 'residence', 'cottage', 'cabin'];
+      if (stayKeywords.some(k => lowerName.includes(k))) return true;
+      return eventCat === 'stay';
+    };
+
+    const isRestaurant = (name: string | undefined, eventCat: string | undefined) => {
+      if (!name) return false;
+      const lowerName = name.toLowerCase();
+      const foodKeywords = ['restaurant', 'cafe', 'bistro', 'diner', 'grill', 'bar', 'pub', 'kitchen', 'eatery', 'bakery', 'coffee', 'tea', 'dining', 'steakhouse', 'sushi', 'pizza', 'burger', 'deli'];
+      if (foodKeywords.some(k => lowerName.includes(k))) return true;
+      return eventCat === 'food';
+    };
+
+    const isLogistics = (name: string | undefined, eventCat: string | undefined) => {
+      if (!name) return false;
+      const lowerName = name.toLowerCase();
+      // Be more specific with keywords to avoid false positives (like "Museum of the Dog" or "LouLou")
+      const logisticsKeywords = ['airport', 'rental car', 'gas station', 'parking', 'shuttle', 'yyz', 'phx', 'jfk', 'lax', 'sfo', 'lga', 'ewr', 'flight', 'transit', 'uber', 'lyft', 'taxi', 'terminal', 'shuttle', 'subway station', 'train station', 'bus station'];
       if (logisticsKeywords.some(k => lowerName.includes(k))) return true;
       if (eventCat === 'flight' || eventCat === 'transit') return true;
       return false;
@@ -691,27 +729,39 @@ const PlacesView = ({
 
     itinerary.forEach(day => {
       day.events.forEach(event => {
-        if (event.location) {
+        // Skip generic locations (neighborhoods/areas) that don't represent a specific venue
+        const isGenericLocation = event.location && genericTerms.some(term => {
+          const lowerLoc = event.location!.name.toLowerCase();
+          return lowerLoc.includes(term) && lowerLoc.split(' ').length <= 2;
+        });
+        
+        if (event.location && !isGenericLocation) {
           let cat = 'attraction';
-          if (event.category === 'food') cat = 'restaurant';
-          if (event.category === 'stay') cat = 'stay';
-          if (isLogistics(event.location.name, event.category)) cat = 'logistics';
-          addPlace(event.location, cat, `itinerary-${event.id}`, day.date);
+          // Check stay and restaurant FIRST to avoid mis-categorizing them as logistics if they contain "Station" etc.
+          if (isStay(event.location.name, event.category)) cat = 'stay';
+          else if (isRestaurant(event.location.name, event.category)) cat = 'restaurant';
+          else if (isLogistics(event.location.name, event.category)) cat = 'logistics';
+          
+          addPlace(event.location, cat, `itinerary-${event.id}`, day.date, event.description);
         }
         if (event.origin) {
-          let cat = isLogistics(event.origin.name, event.category) ? 'logistics' : 'attraction';
-          addPlace(event.origin, cat, `itinerary-${event.id}-origin`, day.date);
+          let cat = 'attraction';
+          if (isStay(event.origin.name, event.category)) cat = 'stay';
+          else if (isLogistics(event.origin.name, event.category)) cat = 'logistics';
+          addPlace(event.origin, cat, `itinerary-${event.id}-origin`, day.date, event.description);
         }
         if (event.destination) {
-          let cat = isLogistics(event.destination.name, event.category) ? 'logistics' : 'attraction';
-          addPlace(event.destination, cat, `itinerary-${event.id}-dest`, day.date);
+          let cat = 'attraction';
+          if (isStay(event.destination.name, event.category)) cat = 'stay';
+          else if (isLogistics(event.destination.name, event.category)) cat = 'logistics';
+          addPlace(event.destination, cat, `itinerary-${event.id}-dest`, day.date, event.description);
         }
       });
     });
     return places;
   }, [itinerary]);
 
-  const allPlaces = [...itineraryPlaces, ...shortlist.map(p => ({ ...p, source: 'shortlist' }))];
+  const allPlaces = [...itineraryPlaces, ...(Array.isArray(shortlist) ? shortlist : []).map(p => ({ ...p, source: 'shortlist' }))];
 
   const filteredPlaces = allPlaces.filter(p => {
     const matchesFilter = filter === 'all' || p.category === filter;
@@ -723,14 +773,27 @@ const PlacesView = ({
     <div className="flex-1 overflow-y-auto p-6 pb-32 space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-black text-slate-900 tracking-tight">Places</h2>
-        {isAdmin && (
+        <div className="flex gap-2">
           <button 
-            onClick={() => setShowAddModal(true)}
-            className="p-2 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-100"
+            onClick={() => {
+              // Force a re-render of itineraryPlaces by slightly modifying search (hacky but works for quick sync)
+              setSearch(s => s + ' ');
+              setTimeout(() => setSearch(s => s.trim()), 10);
+            }}
+            className="p-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition-colors"
+            title="Refresh from itinerary"
           >
-            <Plus className="w-5 h-5" />
+            <RefreshCw className="w-5 h-5" />
           </button>
-        )}
+          {isAdmin && (
+            <button 
+              onClick={() => setShowAddModal(true)}
+              className="p-2 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-100"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Search & Filter */}
@@ -787,8 +850,8 @@ const PlacesView = ({
                    place.category === 'logistics' ? <Plane className="w-5 h-5" /> :
                    <MapPin className="w-5 h-5" />}
                 </div>
-                <div>
-                  <h4 className="font-bold text-slate-900 leading-tight">{place.name}</h4>
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-bold text-slate-900 leading-tight truncate">{place.name}</h4>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-[10px] font-black uppercase tracking-tighter text-slate-400">
                       {place.category}
@@ -799,6 +862,12 @@ const PlacesView = ({
                       </span>
                     )}
                   </div>
+                  {place.description && (
+                    <p className="text-[10px] text-slate-500 mt-2 line-clamp-2 italic bg-slate-50 p-2 rounded-lg border border-slate-100">
+                      <span className="font-bold not-italic text-slate-400 mr-1">Note:</span>
+                      {place.description}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -856,6 +925,152 @@ const PlacesView = ({
 
 // --- Main App ---
 
+const TravellersView = ({ travellers, onUpdate }: { travellers: TripMember[], onUpdate: (list: TripMember[]) => void }) => {
+  const [isAdding, setIsAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newInitials, setNewInitials] = useState('');
+  const [newColor, setNewColor] = useState('#3b82f6');
+
+  const handleAdd = () => {
+    if (!newName || !newInitials) return;
+    const newMember: TripMember = {
+      id: newName.toLowerCase().replace(/\s+/g, '-'),
+      name: newName,
+      initials: newInitials.toUpperCase().slice(0, 2),
+      color: newColor
+    };
+    onUpdate([...travellers, newMember]);
+    setNewName('');
+    setNewInitials('');
+    setIsAdding(false);
+  };
+
+  const handleRemove = (id: string) => {
+    if (window.confirm('Remove this traveller from the master list?')) {
+      onUpdate(travellers.filter(t => t.id !== id));
+    }
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Travellers</h2>
+          <p className="text-xs text-slate-400 font-medium">Manage your master list of travellers</p>
+        </div>
+        <button 
+          onClick={() => setIsAdding(true)}
+          className="p-2 bg-blue-600 text-white rounded-full shadow-lg shadow-blue-100"
+        >
+          <Plus className="w-5 h-5" />
+        </button>
+      </div>
+
+      <div className="grid gap-4">
+        {travellers.map(t => (
+          <div key={t.id} className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div 
+                className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black text-lg shadow-inner"
+                style={{ backgroundColor: t.color }}
+              >
+                {t.initials}
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900">{t.name}</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.id}</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => handleRemove(t.id)}
+              className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <AnimatePresence>
+        {isAdding && (
+          <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-4 sm:p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsAdding(false)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, y: 100, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 100, scale: 0.95 }}
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden p-6 space-y-6"
+            >
+              <div>
+                <h3 className="text-xl font-black text-slate-900 tracking-tight">Add Traveller</h3>
+                <p className="text-xs text-slate-400 font-medium">Add a new person to your master list</p>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Name</label>
+                  <input 
+                    type="text"
+                    value={newName}
+                    onChange={e => {
+                      setNewName(e.target.value);
+                      if (!newInitials) setNewInitials(e.target.value.charAt(0).toUpperCase());
+                    }}
+                    className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder="Full Name"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Initials</label>
+                    <input 
+                      type="text"
+                      value={newInitials}
+                      onChange={e => setNewInitials(e.target.value.toUpperCase().slice(0, 2))}
+                      className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+                      placeholder="I"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase">Color</label>
+                    <input 
+                      type="color"
+                      value={newColor}
+                      onChange={e => setNewColor(e.target.value)}
+                      className="w-full h-[46px] p-1 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setIsAdding(false)}
+                  className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleAdd}
+                  className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg shadow-blue-200"
+                >
+                  Add Traveller
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'itinerary' | 'gas' | 'info' | 'places'>('itinerary');
   const [activeDayIdx, setActiveDayIdx] = useState(0);
@@ -867,17 +1082,29 @@ export default function App() {
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [view, setView] = useState<'itinerary' | 'list'>('list');
+  const [view, setView] = useState<'itinerary' | 'list' | 'travellers'>('list');
+  const [lastTripView, setLastTripView] = useState<'itinerary' | 'list'>('list');
   const [currentTripId, setCurrentTripId] = useState<string>('main');
   const [shortlist, setShortlist] = useState<any[]>([]);
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [expandedTrips, setExpandedTrips] = useState<Set<string>>(new Set());
   const [tripsList, setTripsList] = useState<{id: string, title: string, date: string, year?: string}[]>([]);
-  const [tripTitle, setTripTitle] = useState('Arizona 2026');
-  const [tripDates, setTripDates] = useState('May 14 - May 21');
+  const [tripTitle, setTripTitle] = useState('Loading...');
+  const [tripDates, setTripDates] = useState('');
+  const [activeGroupIndices, setActiveGroupIndices] = useState<Record<string, number>>({});
+  const [refinePrompt, setRefinePrompt] = useState('');
+  const [isRefining, setIsRefining] = useState<string | null>(null);
+  const [flightInfo, setFlightInfo] = useState<any>(null);
+  const [rentalInfo, setRentalInfo] = useState<any>(null);
+  const [stays, setStays] = useState<any[]>([]);
+  const [restaurants, setRestaurants] = useState<any[]>([]);
+  const [experiences, setExperiences] = useState<any[]>([]);
+  const [members, setMembers] = useState<TripMember[]>([]);
+  const [masterTravellers, setMasterTravellers] = useState<TripMember[]>([]);
   const [itineraryHistory, setItineraryHistory] = useState<DayPlan[][]>([]);
   const [dbHistory, setDbHistory] = useState<{id: string, days: DayPlan[], timestamp: string, updatedBy: string}[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [aiProposal, setAiProposal] = useState<GeminiProposal | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
@@ -890,6 +1117,35 @@ export default function App() {
     const admins = ['ianyy93@gmail.com', 'wingin.carrie@gmail.com'];
     return user && admins.includes(user.email || '');
   }, [user]);
+
+  useEffect(() => {
+    if (isAdmin && tripsList.length > 0) {
+      console.log('--- Firestore Trips List ---');
+      tripsList.forEach(t => console.log(`ID: ${t.id} | Title: ${t.title} | Date: ${t.date}`));
+      console.log('---------------------------');
+    }
+  }, [tripsList, isAdmin]);
+
+  const hasDriving = useMemo(() => {
+    return itinerary.some(day => day.events.some(event => event.category === 'drive'));
+  }, [itinerary]);
+
+  const hasFlightInfo = useMemo(() => {
+    if (!flightInfo) return false;
+    const hasOutbound = flightInfo.outbound && (flightInfo.outbound.number || flightInfo.outbound.from || flightInfo.outbound.to);
+    const hasReturn = flightInfo.return && (flightInfo.return.number || flightInfo.return.from || flightInfo.return.to);
+    return !!(hasOutbound || hasReturn);
+  }, [flightInfo]);
+
+  const hasRentalInfo = useMemo(() => {
+    if (!rentalInfo) return false;
+    // Be strict: only show if there's a company or car that isn't just a generic placeholder
+    const company = rentalInfo.company?.toLowerCase();
+    if (!company || company === 'rental car' || company === 'tbd' || company === 'not specified' || company === 'none') {
+      if (!rentalInfo.car && !rentalInfo.confirmation) return false;
+    }
+    return !!(rentalInfo.company || rentalInfo.car || rentalInfo.confirmation);
+  }, [rentalInfo]);
 
   useEffect(() => {
     const fetchWeather = async () => {
@@ -928,46 +1184,156 @@ export default function App() {
     }
   };
 
-  const handleAiAction = async () => {
-    if (!aiPrompt.trim()) return;
+  const handleRefineSuggestions = async (dayIdx: number, eventId: string) => {
+    if (!refinePrompt.trim()) return;
+    setIsRefining(eventId);
+    try {
+      const day = itinerary[dayIdx];
+      const event = day.events.find(e => e.id === eventId);
+      if (!event) return;
+
+      const newSuggestions = await geminiService.refineSuggestions(event, refinePrompt);
+      if (newSuggestions.length > 0) {
+        const newItinerary = [...itinerary];
+        const eventIdx = newItinerary[dayIdx].events.findIndex(e => e.id === eventId);
+        newItinerary[dayIdx].events[eventIdx] = {
+          ...newItinerary[dayIdx].events[eventIdx],
+          suggestions: newSuggestions
+        };
+        setItinerary(newItinerary);
+        saveToFirestore(newItinerary);
+      }
+      setRefinePrompt('');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsRefining(null);
+    }
+  };
+
+  const handleAiAction = async (mode: GenerationMode = 'full') => {
+    if (!aiPrompt.trim() && mode !== 'navigation' && mode !== 'autofill') return;
     setIsAiLoading(true);
     try {
       const pastTripsSummary = tripsList.map(t => `${t.title} (${t.date})`).join(', ');
       // If we are in list view, we are likely creating a new trip, so pass an empty itinerary
       const contextItinerary = view === 'list' ? [] : itinerary;
-      const proposal = await geminiService.proposeChanges(contextItinerary, aiPrompt, pastTripsSummary);
+      const contextMembers = members.length > 0 ? members : masterTravellers;
+      const finalPrompt = aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
+      
+      console.log('AI Action:', mode, 'Prompt:', finalPrompt);
+      const proposal = await geminiService.proposeChanges(contextItinerary, finalPrompt, mode, pastTripsSummary, contextMembers, shortlist);
+      console.log('AI Proposal received:', proposal);
+      
       setAiProposal(proposal);
+      setShowAiAssistant(true); // Ensure panel is open to show proposal
       setAiPrompt('');
     } catch (err) {
-      console.error(err);
-      alert("AI Assistant failed to generate a proposal. Please try again.");
+      console.error('AI Action Error:', err);
+      const errorMessage = err instanceof Error ? err.message : "AI Assistant failed to generate a proposal. Please try again.";
+      alert(errorMessage);
     } finally {
       setIsAiLoading(false);
     }
   };
 
-  const applyAiProposal = () => {
-    if (!aiProposal) return;
-    
-    if (view === 'list') {
-      // Create a new trip from proposal
-      const baseTitle = aiProposal.itinerary[0]?.title || 'New Trip';
-      const newId = baseTitle.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substr(2, 5);
-      setCurrentTripId(newId);
-      setItinerary(aiProposal.itinerary);
-      saveToFirestore(aiProposal.itinerary, undefined, undefined, false, [], newId);
-      setView('itinerary');
-    } else {
-      setItineraryHistory(prev => [...prev, itinerary]);
-      setItinerary(aiProposal.itinerary);
-      saveToFirestore(aiProposal.itinerary);
-    }
-    
-    setAiProposal(null);
-    setShowAiAssistant(false);
-  };
+    const applyAiProposal = async () => {
+      if (!aiProposal) return;
+      
+      const firstDayDate = aiProposal.itinerary[0]?.date || '';
+      const lastDayDate = aiProposal.itinerary[aiProposal.itinerary.length - 1]?.date || '';
+      const inferredDates = firstDayDate && lastDayDate ? `${firstDayDate} - ${lastDayDate}` : '';
 
-  const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string, isAutoSync = false, currentShortlist?: any[], tripIdOverride?: string) => {
+      // Filter out generic neighborhoods from shortlist just in case AI pollutes it
+      const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south'];
+      const filteredAiShortlist = (aiProposal.shortlist || []).filter(p => {
+        const name = p.name?.toLowerCase() || '';
+        return !genericTerms.some(term => name.includes(term) && name.split(' ').length <= 2);
+      });
+
+      let finalTitle = aiProposal.title;
+      const isGenericTitle = !finalTitle || 
+                            finalTitle.toLowerCase().includes('arizona') || 
+                            finalTitle.toLowerCase().includes('arrival') || 
+                            finalTitle.toLowerCase().includes('new trip') ||
+                            finalTitle.toLowerCase().includes('itinerary');
+
+      if (isGenericTitle) {
+        // Try to find a better title from the first day or destination
+        const firstDayTitle = aiProposal.itinerary[0]?.title;
+        const hasPlaceInTitle = (t: string) => t && !t.toLowerCase().includes('arrival') && !t.toLowerCase().includes('arizona') && !t.toLowerCase().includes('new trip');
+        
+        if (hasPlaceInTitle(firstDayTitle)) {
+          finalTitle = firstDayTitle;
+        } else {
+          // Fallback to existing trip title if it's not generic, otherwise "New Trip"
+          finalTitle = hasPlaceInTitle(tripTitle) ? tripTitle : 'New Trip';
+        }
+      }
+
+      // Ensure dates are correct
+      const finalDates = aiProposal.dates || inferredDates;
+
+      if (view === 'list') {
+        // Create a new trip from proposal
+        const newId = finalTitle.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substr(2, 5);
+        
+        const aiShortlist = filteredAiShortlist.map(p => ({
+          ...p,
+          id: p.id || Math.random().toString(36).substr(2, 9),
+          addedAt: new Date().toISOString()
+        }));
+        
+        // Save first, then switch to ensure data is ready for the listener
+        await saveToFirestore(aiProposal.itinerary, finalTitle, finalDates, false, aiShortlist, newId, aiProposal.flightInfo || null, aiProposal.rentalInfo || null, aiProposal.stays || [], aiProposal.restaurants || [], aiProposal.experiences || [], aiProposal.members || []);
+        
+        setCurrentTripId(newId);
+        setItinerary(aiProposal.itinerary);
+        setTripTitle(finalTitle);
+        setTripDates(finalDates);
+        setShortlist(aiShortlist);
+        setFlightInfo(aiProposal.flightInfo || null);
+        setRentalInfo(aiProposal.rentalInfo || null);
+        setStays(aiProposal.stays || []);
+        setRestaurants(aiProposal.restaurants || []);
+        setExperiences(aiProposal.experiences || []);
+        setMembers(aiProposal.members || []);
+        
+        setView('itinerary');
+      } else {
+        setItineraryHistory(prev => [...prev, itinerary]);
+        setItinerary(aiProposal.itinerary);
+        
+        const aiShortlist = filteredAiShortlist.map(p => ({
+          ...p,
+          id: p.id || Math.random().toString(36).substr(2, 9),
+          addedAt: new Date().toISOString()
+        }));
+        
+        const updatedShortlist = [
+          ...shortlist, 
+          ...aiShortlist.filter(p => !shortlist.some(s => s.name === p.name))
+        ];
+          
+        setShortlist(updatedShortlist);
+        
+        setTripTitle(finalTitle);
+        setTripDates(finalDates);
+        setFlightInfo(aiProposal.flightInfo || flightInfo);
+        setRentalInfo(aiProposal.rentalInfo || rentalInfo);
+        setStays(aiProposal.stays || stays);
+        setRestaurants(aiProposal.restaurants || restaurants);
+        setExperiences(aiProposal.experiences || experiences);
+        setMembers(aiProposal.members || members);
+        
+        saveToFirestore(aiProposal.itinerary, finalTitle, finalDates, false, updatedShortlist, undefined, aiProposal.flightInfo || flightInfo, aiProposal.rentalInfo || rentalInfo, aiProposal.stays || stays, aiProposal.restaurants || restaurants, aiProposal.experiences || experiences, aiProposal.members || members);
+      }
+      
+      setAiProposal(null);
+      setShowAiAssistant(false);
+    };
+
+  const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string, isAutoSync = false, currentShortlist?: any[], tripIdOverride?: string, currentFlightInfo?: any, currentRentalInfo?: any, currentStays?: any[], currentRestaurants?: any[], currentExperiences?: any[], currentMembers?: TripMember[]) => {
     if (!auth.currentUser) return;
     if (!isAdmin) {
       console.error("Unauthorized: You do not have permission to save changes.");
@@ -980,16 +1346,24 @@ export default function App() {
     try {
       // If this is a structural update or manual save, we might want to record history
       // For now, let's just save the main document
-      await setDoc(tripDoc, { 
+      const saveData: any = { 
         days: data,
-        title: title || tripTitle,
-        dates: dates || tripDates,
+        title: title !== undefined ? title : (tripIdOverride ? 'New Trip' : tripTitle),
+        dates: dates !== undefined ? dates : (tripIdOverride ? 'Dates TBD' : tripDates),
         templateVersion: TEMPLATE_VERSION,
         lastUpdated: new Date().toISOString(),
         updatedBy: auth.currentUser.email,
         isAutoSync,
-        shortlist: currentShortlist || shortlist
-      }, { merge: true });
+        shortlist: currentShortlist !== undefined ? currentShortlist : shortlist,
+        flightInfo: currentFlightInfo !== undefined ? currentFlightInfo : flightInfo,
+        rentalInfo: currentRentalInfo !== undefined ? currentRentalInfo : rentalInfo,
+        stays: currentStays !== undefined ? currentStays : stays,
+        restaurants: currentRestaurants !== undefined ? currentRestaurants : restaurants,
+        experiences: currentExperiences !== undefined ? currentExperiences : experiences,
+        members: currentMembers !== undefined ? currentMembers : members
+      };
+
+      await setDoc(tripDoc, saveData, { merge: true });
 
       // Record history for manual changes (not auto-syncs)
       if (!isAutoSync) {
@@ -1012,34 +1386,59 @@ export default function App() {
     }
   };
 
-  const handleSelectSuggestion = (dayId: number, eventId: string, suggestion: Location) => {
-    const newItinerary = itinerary.map(day => {
-      if (day.id !== dayId) return day;
-      
-      const newEvents = day.events.map((event, idx) => {
-        if (event.id === eventId) {
-          const isSelected = event.location?.name === suggestion.name;
-          return { ...event, location: isSelected ? undefined : suggestion };
-        }
-        const prevEvent = day.events[idx - 1];
-        if (prevEvent && prevEvent.id === eventId && event.type === 'travel') {
-          const isSelected = prevEvent.location?.name === suggestion.name;
-          if (isSelected) {
-            let lastLoc: Location | undefined;
-            for (let i = idx - 2; i >= 0; i--) {
-              const e = day.events[i];
-              if (e.location) { lastLoc = e.location; break; }
-              if (e.destination) { lastLoc = e.destination; break; }
-            }
-            return { ...event, origin: lastLoc };
-          }
-          return { ...event, origin: suggestion };
-        }
-        return event;
-      });
+  const handleSelectSuggestion = (dayIdx: number, eventId: string, suggestion: Location) => {
+    const newItinerary = [...itinerary];
+    const day = newItinerary[dayIdx];
+    if (!day) return;
 
-      return { ...day, events: newEvents };
+    const newEvents = day.events.map((event) => {
+      if (event.id === eventId) {
+        const isSelected = event.location?.name === suggestion.name;
+        const newLoc = isSelected ? undefined : suggestion;
+        
+        // Update title if it's a generic meal title
+        let newTitle = event.title;
+        const genericTitles = ['Quick Lunch', 'Lunch', 'Dinner', 'Breakfast', 'Meal', 'Food Stop'];
+        if (!isSelected && (genericTitles.includes(event.title) || event.title.toLowerCase().includes('lunch') || event.title.toLowerCase().includes('dinner'))) {
+          newTitle = suggestion.name;
+        } else if (isSelected) {
+          // Revert to generic if unselecting? Maybe not, let's keep it simple.
+        }
+
+        return { ...event, title: newTitle, location: newLoc };
+      }
+      return event;
     });
+
+    // Rebuild navigation for this day
+    const finalEvents: TripEvent[] = [];
+    const baseEvents = newEvents.filter(e => e.type !== 'travel');
+    
+    for (let i = 0; i < baseEvents.length; i++) {
+      const current = baseEvents[i];
+      finalEvents.push(current);
+      
+      const next = baseEvents[i+1];
+      if (next && !current.hidden && !next.hidden) {
+        const currentLoc = current.location;
+        const nextLoc = next.location;
+        
+        if (currentLoc && nextLoc && (currentLoc.lat !== nextLoc.lat || currentLoc.lng !== nextLoc.lng)) {
+          finalEvents.push({
+            id: `nav-${current.id}-${next.id}`,
+            type: 'travel',
+            category: 'drive',
+            title: `Drive to ${nextLoc.name}`,
+            origin: currentLoc,
+            destination: nextLoc,
+            startTime: current.endTime || current.startTime,
+            endTime: next.startTime
+          });
+        }
+      }
+    }
+
+    newItinerary[dayIdx] = { ...day, events: finalEvents };
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
   };
@@ -1117,15 +1516,30 @@ export default function App() {
   };
 
   const handleDeleteTrip = async (tripId: string) => {
+    console.log('--- DELETE PROCESS START ---');
+    console.log('Target Trip ID:', tripId);
+    console.log('Current User:', auth.currentUser?.email);
+    console.log('Is Admin:', isAdmin);
+
     if (!isAdmin) {
+      console.error('Delete aborted: User is not an admin.');
       setLoginError("You do not have permission to delete trips.");
       return;
     }
-    if (!window.confirm('Are you sure you want to delete this trip?')) return;
     
     try {
-      await deleteDoc(doc(db, 'trips', tripId));
+      console.log('Executing Firestore deleteDoc...');
+      const docRef = doc(db, 'trips', tripId);
+      await deleteDoc(docRef);
+      console.log('Firestore deleteDoc successful.');
+      
+      if (currentTripId === tripId) {
+        console.log('Current trip was deleted, redirecting to main...');
+        setCurrentTripId('main');
+      }
+      console.log('--- DELETE PROCESS COMPLETE ---');
     } catch (error) {
+      console.error('Firestore deleteDoc FAILED:', error);
       handleFirestoreError(error, OperationType.DELETE, `trips/${tripId}`);
     }
   };
@@ -1145,6 +1559,128 @@ export default function App() {
     }
     
     return false;
+  };
+
+  const handleGenerateNavigation = () => {
+    console.log('UI: handleGenerateNavigation called');
+    // 1. Check for missing locations first to warn user
+    const missingLocations: string[] = [];
+    itinerary.forEach(day => {
+      day.events.forEach(e => {
+        if ((e.type === 'activity' || e.type === 'food' || e.type === 'stay') && (!e.location || !e.location.lat || !e.location.lng)) {
+          missingLocations.push(e.title);
+        }
+      });
+    });
+
+    if (missingLocations.length > 0) {
+      console.warn(`Missing locations for: ${missingLocations.join(', ')}`);
+    }
+
+    // Determine default travel mode
+    const defaultMode = hasRentalInfo ? 'drive' : 'transit';
+    const defaultTitle = hasRentalInfo ? 'Drive' : 'Transit';
+
+    // Track the last event for each member to link them across days
+    const lastEventPerMember: Record<string, TripEvent> = {};
+
+    const toMinutes = (timeStr: string) => {
+      if (!timeStr) return 0;
+      try {
+        const [time, modifier] = timeStr.split(' ');
+        let [hours, minutes] = time.split(':').map(Number);
+        if (modifier === 'PM' && hours < 12) hours += 12;
+        if (modifier === 'AM' && hours === 12) hours = 0;
+        return hours * 60 + minutes;
+      } catch (e) {
+        return 0;
+      }
+    };
+
+    const newItinerary = itinerary.map(day => {
+      const events = day.events || [];
+      const nonTravelEvents = events.filter(e => e.type !== 'travel');
+      const travelEvents = [...events.filter(e => e.type === 'travel')];
+      
+      // We need to process events in chronological order
+      const sortedActivities = [...nonTravelEvents].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
+
+      sortedActivities.forEach(current => {
+        if (current.hidden) return;
+        if (!current.location || !current.location.lat || !current.location.lng) return;
+
+        // Get actual member IDs (expand 'everyone' if needed)
+        let currentMemberIds = current.memberIds || [];
+        if (currentMemberIds.length === 0 || currentMemberIds.includes('everyone')) {
+          currentMemberIds = masterTravellers.map(m => m.id);
+        }
+
+        currentMemberIds.forEach(mid => {
+          const prev = lastEventPerMember[mid];
+          if (prev && prev.location) {
+            const prevLoc = prev.location;
+            const currLoc = current.location!;
+
+            const isDifferentPlace = 
+              Math.abs(prevLoc.lat - currLoc.lat) > 0.0001 || 
+              Math.abs(prevLoc.lng - currLoc.lng) > 0.0001 || 
+              prevLoc.name.toLowerCase() !== currLoc.name.toLowerCase();
+
+            if (isDifferentPlace) {
+              const startTime = prev.endTime || prev.startTime;
+              const endTime = current.startTime;
+              
+              // Check if we already have a travel event between these two activities for this member
+              const existingNav = travelEvents.find(t => {
+                const tStart = toMinutes(t.startTime);
+                const tEnd = toMinutes(t.endTime || t.startTime);
+                const pEnd = toMinutes(prev.endTime || prev.startTime);
+                const cStart = toMinutes(current.startTime);
+                
+                // It's a match if it's roughly between the two activities and shares at least one location name
+                return (tStart >= pEnd - 10 && tEnd <= cStart + 10) && 
+                       (t.origin?.name === prevLoc.name || t.destination?.name === currLoc.name);
+              });
+
+              if (existingNav) {
+                if (!existingNav.memberIds) existingNav.memberIds = [];
+                if (!existingNav.memberIds.includes(mid)) {
+                  existingNav.memberIds.push(mid);
+                }
+              } else {
+                travelEvents.push({
+                  id: `nav-${prev.id}-${current.id}-${mid}-${Date.now()}`,
+                  type: 'travel',
+                  category: defaultMode,
+                  title: `${defaultTitle} to ${currLoc.name}`,
+                  origin: prevLoc,
+                  destination: currLoc,
+                  startTime,
+                  endTime,
+                  memberIds: [mid]
+                });
+              }
+            }
+          }
+          lastEventPerMember[mid] = current;
+        });
+      });
+
+      // Combine and re-sort
+      const finalEvents = [...nonTravelEvents, ...travelEvents].sort((a, b) => {
+        const timeA = toMinutes(a.startTime);
+        const timeB = toMinutes(b.startTime);
+        if (timeA !== timeB) return timeA - timeB;
+        if (a.type === 'travel' && b.type !== 'travel') return 1;
+        if (a.type !== 'travel' && b.type === 'travel') return -1;
+        return 0;
+      });
+
+      return { ...day, events: finalEvents };
+    });
+
+    setItinerary(newItinerary);
+    saveToFirestore(newItinerary);
   };
 
   const handleToggleHide = (dayIdx: number, eventId: string) => {
@@ -1251,9 +1787,15 @@ export default function App() {
         }
 
         setItinerary(data.days);
-        setTripTitle(data.title || 'Arizona 2026');
-        setTripDates(data.dates || 'May 14 - May 19');
+        setTripTitle(data.title || (currentTripId === 'main' ? 'Arizona 2026' : 'New Trip'));
+        setTripDates(data.dates || (currentTripId === 'main' ? 'May 14 - May 19' : 'Dates TBD'));
         setShortlist(data.shortlist || []);
+        setFlightInfo(data.flightInfo || (currentTripId === 'main' ? FLIGHT_DETAILS : null));
+        setRentalInfo(data.rentalInfo || (currentTripId === 'main' ? RENTAL_DETAILS : null));
+        setStays(data.stays || (currentTripId === 'main' ? STAY_DETAILS : []));
+        setRestaurants(data.restaurants || (currentTripId === 'main' ? RESTAURANT_DETAILS : []));
+        setExperiences(data.experiences || []);
+        setMembers(data.members || []);
       } else if (currentTripId === 'main') {
         // Only initialize if we have a user and they are an admin
         if (auth.currentUser && isAdmin) {
@@ -1291,6 +1833,28 @@ export default function App() {
     };
   }, [currentTripId, isAdmin]);
 
+  // Sync Master Travellers
+  useEffect(() => {
+    if (!user) return;
+    const travellersDoc = doc(db, 'settings', 'travellers');
+    const unsubscribe = onSnapshot(travellersDoc, (snapshot) => {
+      if (snapshot.exists()) {
+        setMasterTravellers(snapshot.data().list || []);
+      } else if (isAdmin) {
+        // Initialize with defaults
+        const defaults: TripMember[] = [
+          { id: 'ian', name: 'Ian', initials: 'I', color: '#2563eb' },
+          { id: 'carrie', name: 'Carrie', initials: 'C', color: '#db2777' },
+          { id: 'pepper', name: 'Pepper', initials: 'P', color: '#ea580c' }
+        ];
+        setDoc(travellersDoc, { list: defaults }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/travellers'));
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'settings/travellers');
+    });
+    return () => unsubscribe();
+  }, [user, isAdmin]);
+
   // Fetch all trips
   useEffect(() => {
     if (!user) return;
@@ -1299,10 +1863,10 @@ export default function App() {
     const unsubscribe = onSnapshot(tripsCollection, (snapshot) => {
       const trips = snapshot.docs.map(doc => {
         const data = doc.data();
-        const title = data.title || (doc.id === 'main' ? 'Arizona 2026' : 'Untitled Trip');
-        const dates = data.dates || 'May 14 - May 19';
+        const title = data.title || (doc.id === 'main' ? 'Arizona 2026' : 'New Trip');
+        const dates = data.dates || (doc.id === 'main' ? 'May 14 - May 19' : 'Dates TBD');
         const yearMatch = title.match(/\d{4}/) || dates.match(/\d{4}/);
-        const year = yearMatch ? yearMatch[0] : 'Other';
+        const year = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();
         
         return {
           id: doc.id,
@@ -1474,7 +2038,7 @@ export default function App() {
   };
 
   const isCurrentEvent = (event: TripEvent) => {
-    if (!event.startTime) return false;
+    if (!event.startTime || !activeDay) return false;
     
     const tripYear = 2026;
     const tripMonth = 4; // May (0-indexed is 4)
@@ -1502,6 +2066,350 @@ export default function App() {
     }
   };
 
+  const EventTile = ({ 
+    event, 
+    dayIdx, 
+    eventIdx, 
+    isGrouped = false 
+  }: { 
+    event: TripEvent, 
+    dayIdx: number, 
+    eventIdx: number, 
+    isGrouped?: boolean 
+  }) => {
+    const isCurrent = isCurrentEvent(event);
+    const expandable = isEventExpandable(event);
+
+    const getDurationMinutes = (start?: string, end?: string) => {
+      if (!start || !end) return 60;
+      try {
+        const s = parseTime(start);
+        const e = parseTime(end);
+        const diff = (e.getTime() - s.getTime()) / (1000 * 60);
+        return Math.max(diff, 30);
+      } catch (e) {
+        return 60;
+      }
+    };
+
+    const duration = getDurationMinutes(event.startTime, event.endTime);
+    const heightScale = 1.5; // 1.5px per minute
+    const minHeight = 100;
+    const calculatedHeight = Math.max(minHeight, duration * heightScale);
+
+    return (
+      <div 
+        onClick={() => expandable && toggleEventExpansion(event.id)}
+        className={cn(
+          "rounded-2xl transition-all relative w-full border p-4 pl-12",
+          event.type === 'travel' 
+            ? "bg-transparent border-dashed border-slate-200" 
+            : "bg-white border-slate-100 shadow-xl shadow-slate-200/50",
+          isCurrent && "ring-2 ring-blue-500/30 border-blue-300",
+          event.hidden && "opacity-50 grayscale",
+          expandable && "cursor-pointer active:scale-[0.99]"
+        )}
+        style={{ 
+          minHeight: isGrouped ? `${calculatedHeight}px` : 'auto',
+          height: isGrouped ? `${calculatedHeight}px` : 'auto'
+        }}
+      >
+        {/* Category Icon - On the edge */}
+        <div className={cn(
+          "absolute left-2 top-4 w-8 h-8 rounded-xl flex items-center justify-center border transition-all",
+          isCurrent ? "bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-100" : 
+          event.type === 'travel' ? "bg-slate-50 border-slate-100 text-slate-400" :
+          event.category === 'flight' ? "bg-purple-50 border-purple-100 text-purple-600" :
+          event.category === 'drive' ? "bg-orange-50 border-orange-100 text-orange-600" :
+          event.category === 'stay' ? "bg-indigo-50 border-indigo-100 text-indigo-600" :
+          event.category === 'food' ? "bg-rose-50 border-rose-100 text-rose-600" :
+          event.category === 'work' ? "bg-blue-50 border-blue-100 text-blue-600" :
+          "bg-emerald-50 border-emerald-100 text-emerald-600"
+        )}>
+          <EventIcon category={event.category} />
+        </div>
+        
+        {/* Member Initials - Top Right Inside */}
+        {event.memberIds && event.memberIds.length > 0 && (
+          <div className="absolute top-4 right-4 flex -space-x-1.5 z-20">
+            {event.memberIds.map(mid => {
+              const member = masterTravellers.find(m => m.id === mid);
+              if (!member) return null;
+              return (
+                <div 
+                  key={mid}
+                  className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[9px] font-black text-white shadow-sm"
+                  style={{ backgroundColor: member.color }}
+                  title={member.name}
+                >
+                  {member.initials}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Edit Button */}
+        {isEditing && isAdmin && eventIdx !== undefined && (
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditingActivity({ dayIdx, actIdx: eventIdx });
+            }}
+            className="absolute -top-1 -right-1 p-1.5 bg-blue-600 text-white rounded-full shadow-lg z-30"
+            title="Edit Event"
+          >
+            <Edit2 className="w-2.5 h-2.5" />
+          </button>
+        )}
+
+        {/* Content Area */}
+        <div className={cn("flex flex-col gap-0", event.memberIds && event.memberIds.length > 0 ? "pr-20" : "pr-4")}>
+          {/* Header: Title & Time */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <h4 className={cn(
+                "text-sm font-bold text-slate-800 leading-tight break-words",
+                event.hidden && "line-through"
+              )}>
+                {event.title}
+              </h4>
+              {event.suggestions && event.suggestions.length > 0 && (
+                <span className="text-[8px] font-black text-blue-600 uppercase tracking-tighter bg-blue-50 px-1 rounded border border-blue-100 shrink-0">
+                  Suggestions
+                </span>
+              )}
+              {event.hidden && (
+                <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200 shrink-0">
+                  Cancelled
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {event.type === 'activity' && (
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleToggleHide(dayIdx, event.id);
+                  }}
+                  className={cn(
+                    "p-1 transition-colors",
+                    event.hidden ? "text-red-500 hover:text-red-600" : "text-slate-400 hover:text-blue-600"
+                  )}
+                  title={event.hidden ? "Restore activity" : "Cancel/Hide activity"}
+                >
+                  {event.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+              )}
+            </div>
+          </div>
+          {(event.startTime || event.endTime) && (
+            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              <Clock className="w-2.5 h-2.5" />
+              {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
+            </div>
+          )}
+          {/* Description */}
+          {event.description && (
+            <div className={cn(
+              "text-[11px] text-slate-500 mt-1 leading-relaxed",
+              !expandedEvents.has(event.id) && "line-clamp-1"
+            )}>
+              {event.description.split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
+                part.match(/^https?:\/\//) ? (
+                  <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline" onClick={(e) => e.stopPropagation()}>
+                    {part}
+                  </a>
+                ) : part
+              )}
+            </div>
+          )}
+
+          {/* Location / Travel Details */}
+          {event.type === 'travel' ? (
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-0">
+                <span className="truncate">{event.origin?.name}</span>
+                <ArrowRight className="w-3 h-3 shrink-0" />
+                <span className="truncate">{event.destination?.name}</span>
+              </div>
+              {event.origin && event.destination && (
+                <div className="flex gap-1 shrink-0">
+                  <a 
+                    href={(() => {
+                      const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
+                      const saddr = event.origin ? encodeURIComponent(event.origin.name) : '';
+                      const daddr = event.destination ? encodeURIComponent(event.destination.name) : '';
+                      let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${event.destination?.lat},${event.destination?.lng}&dirflg=${mode}`;
+                      if (event.waypoints && event.waypoints.length > 0) {
+                        url += `&to=${event.waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
+                      }
+                      return url;
+                    })()}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                    title="Apple Maps Directions"
+                  >
+                    <Navigation className="w-3 h-3" />
+                  </a>
+                  <a 
+                    href={(() => {
+                      const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
+                      const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
+                      return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin?.name || '')}&destination=${encodeURIComponent(event.destination?.name || '')}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
+                    })()}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                    title="Google Maps Directions"
+                  >
+                    <MapIcon className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
+            </div>
+          ) : (
+            event.location && (
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-600 uppercase tracking-wider min-w-0">
+                  <MapPin className="w-2.5 h-2.5 shrink-0" />
+                  <span className="truncate">{event.location.name}</span>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <a 
+                    href={getAppleMapsUrl(event.location)}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                    title="Apple Maps"
+                  >
+                    <Navigation className="w-3 h-3" />
+                  </a>
+                  <a 
+                    href={getGoogleMapsUrl(event.location)}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                    title="Google Maps"
+                  >
+                    <MapIcon className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
+            )
+          )}
+        </div>
+
+        {/* Expanded Content */}
+        {expandedEvents.has(event.id) && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            className="overflow-hidden"
+          >
+            {event.description?.toLowerCase().includes('dog') && (
+              <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 text-[8px] font-black uppercase rounded-full">
+                <Dog className="w-2 h-2" /> Dog Friendly
+              </div>
+            )}
+
+            {event.suggestions && event.suggestions.length > 0 && (
+              <div className="mt-2 space-y-2">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Suggestions</p>
+                <div className="grid grid-cols-1 gap-2">
+                  {event.suggestions.map((sug, sIdx) => (
+                    <button
+                      key={sIdx}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectSuggestion(dayIdx, event.id, sug);
+                      }}
+                      className={cn(
+                        "text-left p-2.5 rounded-xl border transition-all",
+                        event.location?.name === sug.name 
+                          ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-100' 
+                          : 'bg-slate-50 border-slate-100 hover:border-slate-200'
+                      )}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-700 truncate">{sug.name}</p>
+                          <p className="text-[9px] text-slate-400 truncate">{sug.description}</p>
+                        </div>
+                        <div className="flex gap-1 shrink-0 ml-2">
+                          <a 
+                            href={getAppleMapsUrl(sug)}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 text-slate-400 hover:text-blue-600"
+                          >
+                            <Navigation className="w-2.5 h-2.5" />
+                          </a>
+                          <a 
+                            href={getGoogleMapsUrl(sug)}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-1 text-slate-400 hover:text-blue-600"
+                          >
+                            <MapIcon className="w-2.5 h-2.5" />
+                          </a>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Refine Suggestions Input */}
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <div className="relative">
+                    <input 
+                      type="text"
+                      value={isRefining === event.id ? refinePrompt : ''}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        setRefinePrompt(e.target.value);
+                        setIsRefining(event.id);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleRefineSuggestions(dayIdx, event.id);
+                        }
+                      }}
+                      placeholder="Refine suggestions (e.g., 'Italian food')"
+                      className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-[10px] focus:ring-2 focus:ring-blue-500 outline-none"
+                      disabled={isRefining === event.id && refinePrompt === ''}
+                    />
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRefineSuggestions(dayIdx, event.id);
+                      }}
+                      disabled={isRefining === event.id || !refinePrompt.trim()}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-600 disabled:opacity-30"
+                    >
+                      {isRefining === event.id ? (
+                        <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Wand2 className="w-3 h-3" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="max-w-md mx-auto h-[100dvh] bg-slate-50 flex flex-col font-sans shadow-2xl overflow-hidden relative">
       {/* AI Assistant Panel */}
@@ -1518,7 +2426,11 @@ export default function App() {
                 <Sparkles className="w-5 h-5" />
                 <span className="font-bold">Magic Itinerary Assistant</span>
               </div>
-              <button onClick={() => setShowAiAssistant(false)} className="p-1 hover:bg-blue-500 rounded-lg transition-colors">
+              <button 
+                onClick={() => setShowAiAssistant(false)} 
+                className="p-1 hover:bg-blue-500 rounded-lg transition-colors"
+                title="Close AI Assistant"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1530,17 +2442,19 @@ export default function App() {
                     <Wand2 className="w-4 h-4" />
                     Proposed Changes
                   </h3>
-                  <p className="text-sm text-blue-800 mb-4 italic">"{aiProposal.explanation}"</p>
+                  <p className="text-sm text-blue-800 mb-4 italic">"{aiProposal.explanation || "I've updated your itinerary based on your request. Review the changes below."}"</p>
                   <div className="flex gap-2">
                     <button 
                       onClick={applyAiProposal}
                       className="flex-1 bg-blue-600 text-white py-2 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
+                      title="Apply these changes to your itinerary"
                     >
                       <Check className="w-4 h-4" /> Apply
                     </button>
                     <button 
                       onClick={() => setAiProposal(null)}
                       className="flex-1 bg-white text-slate-600 py-2 rounded-xl font-bold border border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors"
+                      title="Discard these changes"
                     >
                       <X className="w-4 h-4" /> Discard
                     </button>
@@ -1558,45 +2472,62 @@ export default function App() {
               )}
             </div>
 
-            <div className="p-4 border-t border-slate-100 bg-slate-50">
+            <div className="p-4 border-t border-slate-100 bg-slate-50 space-y-3">
               <div className="relative">
                 <textarea 
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
                   placeholder="e.g., 'Add a nice dinner spot on Day 1' or 'Make Day 2 more relaxing'"
-                  className="w-full bg-white border border-slate-200 rounded-2xl p-3 pr-12 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none h-20"
+                  className="w-full bg-white border border-slate-200 rounded-2xl p-3 pr-12 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none h-24"
                   disabled={isAiLoading}
                 />
-                <button 
-                  onClick={handleAiAction}
-                  disabled={isAiLoading || !aiPrompt.trim()}
-                  className="absolute right-2 bottom-2 p-2 bg-blue-600 text-white rounded-xl disabled:opacity-50 disabled:bg-slate-400 transition-all hover:scale-105 active:scale-95"
-                >
-                  {isAiLoading ? (
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <Sparkles className="w-5 h-5" />
-                  )}
-                </button>
+                {isAiLoading && (
+                  <div className="absolute right-3 bottom-3">
+                    <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
               </div>
+
+              {!isAiLoading && (
+                <div className="space-y-2">
+                  <button 
+                    onClick={() => handleAiAction('full')}
+                    className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95"
+                    title="Generate an itinerary using your prompt"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" /> {view === 'list' ? 'Create Trip' : 'Update Itinerary'}
+                  </button>
+                  
+                  {view === 'itinerary' && !aiPrompt.trim() && (
+                    <button 
+                      onClick={() => handleAiAction('autofill')}
+                      className="w-full py-2.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-blue-100 transition-all active:scale-95"
+                      title="Auto-fill gaps in your itinerary using shortlist and suggestions"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" /> Auto-fill Itinerary
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Header */}
-      <header className="px-6 pt-6 pb-4 bg-white border-b border-slate-100 shrink-0 z-40">
+      <header className="px-6 pt-6 pb-4 bg-white border-b border-slate-100 shrink-0 z-[70]">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3 min-w-0">
             {view === 'itinerary' && (
               <button 
                 onClick={() => setView('list')}
                 className="p-2 -ml-2 bg-slate-50 text-slate-600 rounded-full hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                title="Back to Trips List"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
             )}
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight truncate">
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
               {view === 'list' ? 'My Trips' : (
                 isEditing ? (
                   <input 
@@ -1614,16 +2545,28 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             {isAdmin && (
-              <button 
-                onClick={() => setShowAiAssistant(!showAiAssistant)}
-                className={cn(
-                  "p-2 rounded-full transition-all",
-                  showAiAssistant ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600"
-                )}
-                title="AI Assistant"
-              >
-                <Sparkles className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-full">
+                <button 
+                  onClick={() => setShowAiAssistant(!showAiAssistant)}
+                  className={cn(
+                    "p-2 rounded-full transition-all",
+                    showAiAssistant ? "bg-blue-600 text-white shadow-md" : "text-slate-600 hover:bg-white hover:shadow-sm"
+                  )}
+                  title="AI Assistant"
+                >
+                  <Sparkles className="w-5 h-5" />
+                </button>
+                <button 
+                  onClick={() => setIsEditing(!isEditing)}
+                  className={cn(
+                    "p-2 rounded-full transition-all",
+                    isEditing ? "bg-blue-600 text-white shadow-md" : "text-slate-600 hover:bg-white hover:shadow-sm"
+                  )}
+                  title={isEditing ? "Stop Editing" : "Enable Editing"}
+                >
+                  <Edit2 className="w-5 h-5" />
+                </button>
+              </div>
             )}
             {view === 'itinerary' && isAdmin && (
               <div className="flex gap-1">
@@ -1663,14 +2606,14 @@ export default function App() {
                   {showUserMenu && (
                     <>
                       <div 
-                        className="fixed inset-0 z-40" 
+                        className="fixed inset-0 z-[80]" 
                         onClick={() => setShowUserMenu(false)} 
                       />
                       <motion.div 
                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-slate-100 py-2 z-50 overflow-hidden"
+                        className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-slate-100 py-2 z-[90] overflow-hidden"
                       >
                         <div className="px-4 py-2 border-b border-slate-50 mb-1">
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Account</p>
@@ -1680,47 +2623,56 @@ export default function App() {
                         {isAdmin && (
                           <button 
                             onClick={() => {
-                              setIsEditing(!isEditing);
+                              if (view !== 'travellers') setLastTripView(view as 'itinerary' | 'list');
+                              setView('travellers');
                               setShowUserMenu(false);
                             }}
                             className={cn(
                               "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors",
-                              isEditing ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:bg-slate-50"
+                              view === 'travellers' ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:bg-slate-50"
                             )}
+                            title="Manage Travellers"
                           >
-                            <Edit2 className="w-4 h-4" />
-                            {isEditing ? "Stop Editing" : "Enable Editing"}
+                            <Users className="w-4 h-4" />
+                            Travellers
                           </button>
                         )}
 
                         <button 
                           onClick={() => {
-                            setView(view === 'list' ? 'itinerary' : 'list');
+                            setView(lastTripView);
                             setShowUserMenu(false);
                           }}
                           className={cn(
                             "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors",
-                            view === 'list' ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:bg-slate-50"
+                            (view === 'list' || view === 'itinerary') ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:bg-slate-50"
                           )}
+                          title="View Trips"
                         >
                           <Briefcase className="w-4 h-4" />
-                          {view === 'list' ? "Back to Itinerary" : "View all my trips"}
+                          Trips
                         </button>
 
-                        <button 
-                          onClick={handleLogout}
-                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors border-t border-slate-50 mt-1"
-                        >
-                          <LogOut className="w-4 h-4" />
-                          Log off
-                        </button>
+                        {view === 'itinerary' && (
+                          <button 
+                            onClick={() => {
+                              setShowHistory(true);
+                              setShowUserMenu(false);
+                            }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                            title="View previous versions of this itinerary"
+                          >
+                            <History className="w-4 h-4" />
+                            Edit History
+                          </button>
+                        )}
                       </motion.div>
                     </>
                   )}
                 </AnimatePresence>
               </div>
             ) : (
-              <button onClick={() => handleLogin()} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors">
+              <button onClick={() => handleLogin()} className="p-2 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors" title="Log in with Google">
                 <LogIn className="w-4 h-4" />
               </button>
             )}
@@ -1778,7 +2730,15 @@ export default function App() {
         )}
       </header>
 
-      {view === 'list' ? (
+      {view === 'travellers' ? (
+        <TravellersView 
+          travellers={masterTravellers} 
+          onUpdate={(list) => {
+            setMasterTravellers(list);
+            setDoc(doc(db, 'settings', 'travellers'), { list }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/travellers'));
+          }} 
+        />
+      ) : view === 'list' ? (
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {tripsList.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
@@ -1788,7 +2748,7 @@ export default function App() {
             <div className="space-y-8">
               {(Object.entries(
                 tripsList.reduce((acc, trip) => {
-                  const year = trip.year || 'Other';
+                  const year = trip.year || trip.title.match(/\d{4}/)?.[0] || 'Other';
                   if (!acc[year]) acc[year] = [];
                   acc[year].push(trip);
                   return acc;
@@ -1805,22 +2765,23 @@ export default function App() {
                       return (
                         <div key={trip.id} className="relative overflow-hidden rounded-3xl group">
                           {/* Delete Action (Behind) */}
-                          <div className="absolute inset-0 bg-red-500 flex items-center justify-end px-6">
+                          <div className="absolute inset-0 bg-red-500 flex items-center justify-end px-6 z-0">
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
+                                console.log('UI: Delete button clicked for trip:', trip.id);
                                 handleDeleteTrip(trip.id);
                               }}
-                              className="text-white flex flex-col items-center gap-1"
+                              className="text-white flex flex-col items-center gap-1 cursor-pointer relative z-10 p-4 active:scale-90 transition-transform"
                             >
-                              <Trash2 className="w-5 h-5" />
-                              <span className="text-[8px] font-black uppercase tracking-tighter">Delete</span>
+                              <Trash2 className="w-6 h-6" />
+                              <span className="text-[10px] font-black uppercase tracking-tighter">Delete</span>
                             </button>
                           </div>
 
                           <motion.div
                             drag="x"
-                            dragConstraints={{ left: -80, right: 0 }}
+                            dragConstraints={{ left: -100, right: 0 }}
                             dragElastic={0.1}
                             className={cn(
                               "relative w-full text-left p-5 rounded-3xl border transition-all",
@@ -1855,6 +2816,34 @@ export default function App() {
                   </div>
                 </div>
               ))}
+              {isAdmin && (
+                <div className="mt-12 p-4 bg-slate-100 rounded-2xl border border-slate-200">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Admin: Raw Firestore Data</h3>
+                  <div className="space-y-4">
+                    {tripsList.map(t => (
+                      <div key={t.id} className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-mono text-slate-400 truncate">{t.id}</p>
+                          <p className="text-xs font-bold text-slate-700 truncate">{t.title}</p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            if (window.confirm(`FORCE DELETE trip: ${t.id}?`)) {
+                              handleDeleteTrip(t.id);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase tracking-tight hover:bg-red-100 transition-colors shrink-0"
+                        >
+                          Force Delete
+                        </button>
+                      </div>
+                    ))}
+                    <pre className="text-[10px] text-slate-600 overflow-x-auto whitespace-pre-wrap font-mono bg-slate-50 p-3 rounded-xl border border-slate-200 mt-4">
+                      {JSON.stringify(tripsList, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1874,6 +2863,7 @@ export default function App() {
                         ? "bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105" 
                         : "bg-slate-100 text-slate-500"
                     )}
+                    title={`View Day ${i + 1}: ${day.date}`}
                   >
                     {day.date}
                     {weatherData[i] ? (
@@ -1894,6 +2884,7 @@ export default function App() {
                   { id: 'travel', label: 'Travel', icon: <Car className="w-3 h-3" /> },
                   { id: 'flight', label: 'Flights', icon: <Plane className="w-3 h-3" /> },
                   { id: 'stay', label: 'Stay', icon: <Moon className="w-3 h-3" /> },
+                  { id: 'work', label: 'Work', icon: <Briefcase className="w-3 h-3" /> },
                 ].map((f) => (
                   <button
                     key={f.id}
@@ -1904,6 +2895,7 @@ export default function App() {
                         ? "bg-slate-900 text-white border-slate-900 shadow-sm" 
                         : "bg-white text-slate-400 border-slate-100 hover:border-slate-200"
                     )}
+                    title={`Filter by ${f.label}`}
                   >
                     {f.icon}
                     {f.label}
@@ -1917,29 +2909,15 @@ export default function App() {
         <main className="flex-1 overflow-y-auto scrollbar-hide">
         <AnimatePresence mode="wait">
           {activeTab === 'itinerary' && (
-            <motion.div 
-              key={`day-${activeDayIdx}`}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              drag="x"
-              dragConstraints={{ left: 0, right: 0 }}
-              onDragEnd={(_, info) => {
-                if (info.offset.x > 100) {
-                  if (activeDayIdx > 0) {
-                    setActiveDayIdx(activeDayIdx - 1);
-                  } else {
-                    setView('list');
-                  }
-                } else if (info.offset.x < -100) {
-                  if (activeDayIdx < itinerary.length - 1) {
-                    setActiveDayIdx(activeDayIdx + 1);
-                  }
-                }
-              }}
-              className="pb-32"
-            >
-              <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-md px-6 py-4 border-b border-slate-50 mb-6">
+            activeDay ? (
+              <motion.div 
+                key={`day-${activeDayIdx}`}
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="pb-32"
+              >
+              <div className="sticky top-0 z-[60] bg-white/80 backdrop-blur-md px-6 py-4 border-b border-slate-50 mb-6">
                 <div className="flex justify-between items-start">
                   <div>
                     {isEditing ? (
@@ -1987,21 +2965,20 @@ export default function App() {
                     {isAdmin && (
                       <div className="flex gap-1">
                         <button 
-                          onClick={() => setShowHistory(true)}
-                          className="p-2 bg-slate-50 rounded-xl text-slate-400 hover:bg-slate-100 transition-colors"
-                          title="Version History"
+                          onClick={handleGenerateNavigation}
+                          className="p-2 bg-blue-50 rounded-xl text-blue-600 hover:bg-blue-100 transition-colors"
+                          title="Generate Navigation"
                         >
-                          <History className="w-4 h-4" />
+                          <Route className="w-4 h-4" />
                         </button>
                         <button 
                           onClick={() => {
-                            if (window.confirm('Update itinerary from code template? This fixes location and structure issues but resets manual edits.')) {
-                              setItinerary(ITINERARY_DATA);
-                              saveToFirestore(ITINERARY_DATA);
+                            if (window.confirm('Auto-fill the rest of your itinerary? This will use your shortlisted places and logical suggestions to complete the plan.')) {
+                              handleAiAction('autofill');
                             }
                           }}
                           className="p-2 bg-blue-50 rounded-xl text-blue-600 hover:bg-blue-100 transition-colors"
-                          title="Sync with Template"
+                          title="Auto-fill Itinerary"
                         >
                           <Sparkles className="w-4 h-4" />
                         </button>
@@ -2028,357 +3005,170 @@ export default function App() {
                   </div>
                 </div>
               </div>
-
               <div className="px-6">
                 <div className="space-y-4">
                   {(() => {
-                    const events = activeDay.events;
-                    const processed: (TripEvent & { isAuto?: boolean; originalIdx?: number })[] = [];
+                    const eventsWithIdx = (activeDay.events || []).map((e, idx) => ({ ...e, originalIdx: idx }));
                     
-                    for (let i = 0; i < events.length; i++) {
-                      let current = { ...events[i] };
+                    // Group events by startTime for overlapping tiles
+                    const groupedEvents: (TripEvent & { originalIdx: number })[][] = [];
+                    let i = 0;
+                    while (i < eventsWithIdx.length) {
+                      const current = eventsWithIdx[i];
+                      const group = [current];
+                      let j = i + 1;
                       
-                      // For travel events, ensure they have origin/destination
-                      if (current.type === 'travel') {
-                        // Only auto-fill if not already defined in the data
-                        if (!current.origin) {
-                          // Look at the immediately preceding event
-                          const prev = events[i - 1];
-                          if (prev) {
-                            if (prev.type === 'activity' && prev.location) {
-                              current.origin = prev.location;
-                            } else if (prev.type === 'travel' && prev.destination) {
-                              current.origin = prev.destination;
-                            }
-                          }
-                          
-                          // If still not found, look further back for the last known activity
-                          if (!current.origin) {
-                            for (let j = i - 1; j >= 0; j--) {
-                              if (events[j].type === 'activity' && !events[j].hidden && events[j].location) {
-                                current.origin = events[j].location;
-                                break;
-                              }
-                            }
-                          }
-                        }
+                      const toMinutes = (timeStr: string) => {
+                        if (!timeStr) return 0;
+                        const parts = timeStr.split(' ');
+                        const time = parts[0];
+                        const modifier = parts[1];
+                        let [hours, minutes] = time.split(':').map(Number);
+                        if (modifier === 'PM' && hours < 12) hours += 12;
+                        if (modifier === 'AM' && hours === 12) hours = 0;
+                        return hours * 60 + minutes;
+                      };
 
-                        if (!current.destination) {
-                          // Look at the immediately succeeding event
-                          const next = events[i + 1];
-                          if (next) {
-                            if (next.type === 'activity' && next.location) {
-                              current.destination = next.location;
-                            } else if (next.type === 'travel' && next.origin) {
-                              current.destination = next.origin;
-                            }
-                          }
-
-                          // If still not found, look further forward for the next known activity
-                          if (!current.destination) {
-                            for (let j = i + 1; j < events.length; j++) {
-                              if (events[j].type === 'activity' && !events[j].hidden && events[j].location) {
-                                current.destination = events[j].location;
-                                break;
-                              }
-                            }
-                          }
-                        }
-                      }
-
-                      processed.push({ ...current, originalIdx: i });
-
-                      const next = events[i + 1];
-                      if (next && current.type === 'activity' && next.type === 'activity' && !current.hidden && !next.hidden) {
-                        const currentLoc = current.location;
-                        const nextLoc = next.location;
+                      const overlaps = (e1: TripEvent, e2: TripEvent) => {
+                        if (!e1.startTime || !e2.startTime) return false;
                         
-                        if (currentLoc && nextLoc && (currentLoc.lat !== nextLoc.lat || currentLoc.lng !== nextLoc.lng)) {
-                          processed.push({
-                            id: `auto-travel-${current.id}-${next.id}`,
-                            type: 'travel',
-                            category: 'drive',
-                            title: `Drive to ${nextLoc.name}`,
-                            origin: currentLoc,
-                            destination: nextLoc,
-                            startTime: current.endTime,
-                            endTime: next.startTime,
-                            isAuto: true
-                          });
+                        try {
+                          const s1 = toMinutes(e1.startTime);
+                          const e1_end = toMinutes(e1.endTime || e1.startTime);
+                          const s2 = toMinutes(e2.startTime);
+                          const e2_end = toMinutes(e2.endTime || e2.startTime);
+
+                          if (s1 === s2) return true;
+
+                          const m1 = e1.memberIds || [];
+                          const m2 = e2.memberIds || [];
+                          const differentMembers = m1.length > 0 && m2.length > 0 && 
+                            (m1.some(id => !m2.includes(id)) || m2.some(id => !m1.includes(id)));
+
+                          if (differentMembers) {
+                            return (s1 < e2_end && s2 < e1_end) || Math.abs(s1 - s2) <= 30;
+                          }
+
+                          return s1 < e2_end && s2 < e1_end && Math.abs(s1 - s2) < 5;
+                        } catch (e) {
+                          return false;
                         }
+                      };
+
+                      while (j < eventsWithIdx.length && 
+                             group.some(e => overlaps(e, eventsWithIdx[j]))) {
+                        group.push(eventsWithIdx[j]);
+                        j++;
                       }
+                      groupedEvents.push(group);
+                      i = j;
                     }
 
-                    return processed
-                      .filter(event => {
-                        if (activeFilter === 'all') return true;
-                        if (activeFilter === 'activity') return event.category === 'activity' || event.category === 'walk';
-                        if (activeFilter === 'food') return event.category === 'food';
-                        if (activeFilter === 'travel') return event.type === 'travel' || event.category === 'drive' || event.category === 'transit';
-                        if (activeFilter === 'flight') return event.category === 'flight';
-                        if (activeFilter === 'stay') return event.category === 'stay';
-                        return true;
-                      })
-                      .map((event, idx) => {
-                      const isCurrent = isCurrentEvent(event);
-                      
-                      if (event.hidden && event.type === 'travel') return null;
+                    return (
+                      <div className="space-y-3">
+                        {groupedEvents
+                          .map((group) => group.filter(event => {
+                            if (activeFilter === 'all') return true;
+                            if (activeFilter === 'activity') return event.category === 'activity' || event.category === 'walk';
+                            if (activeFilter === 'food') return event.category === 'food';
+                            if (activeFilter === 'travel') return event.type === 'travel' || event.category === 'drive' || event.category === 'transit';
+                            if (activeFilter === 'flight') return event.category === 'flight';
+                            if (activeFilter === 'stay') return event.category === 'stay';
+                            return true;
+                          }))
+                          .filter(group => group.length > 0)
+                          .map((group, groupIdx) => {
+                            const mainEvent = group[0];
+                            const isMainCurrent = isCurrentEvent(mainEvent);
+                            
+                            const groupId = `${activeDayIdx}-${groupIdx}`;
+                            const activeIdx = activeGroupIndices[groupId] ?? 0;
 
-                      return (
-                        <div 
-                          key={event.id} 
-                          onClick={() => isEventExpandable(event) && toggleEventExpansion(event.id)}
-                          className={cn(
-                            "relative pl-12 transition-all",
-                            isEventExpandable(event) && "cursor-pointer active:scale-[0.99]"
-                          )}
-                        >
-                        {/* Icon & Chevron Column */}
-                        <div className="absolute left-0 top-1 w-10 flex flex-col items-center gap-1.5 z-10">
-                          <div className={cn(
-                            "p-2 rounded-xl transition-all border",
-                            isCurrent ? "bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-100 scale-110" : 
-                            event.type === 'travel' ? "bg-slate-50 border-slate-100 text-slate-400" :
-                            event.category === 'flight' ? "bg-purple-50 border-purple-100 text-purple-600" :
-                            event.category === 'drive' ? "bg-orange-50 border-orange-100 text-orange-600" :
-                            event.category === 'stay' ? "bg-indigo-50 border-indigo-100 text-indigo-600" :
-                            event.category === 'food' ? "bg-rose-50 border-rose-100 text-rose-600" :
-                            "bg-emerald-50 border-emerald-100 text-emerald-600"
-                          )}>
-                            <EventIcon category={event.category} />
-                          </div>
-                          {isEventExpandable(event) && (
-                            <ChevronDown className={cn(
-                              "w-3.5 h-3.5 text-slate-400 transition-transform duration-200",
-                              expandedEvents.has(event.id) && "rotate-180"
-                            )} />
-                          )}
-                        </div>
+                             return (
+                              <div key={groupIdx} className="relative">
+                                {group.length > 1 ? (
+                                  <div className="flex gap-2 items-stretch overflow-x-auto scrollbar-hide snap-x snap-mandatory -mx-6 px-6 pb-6">
+                                    {(() => {
+                                      // Get all unique members involved in this group
+                                      const involvedMemberIds = new Set<string>();
+                                      group.forEach(event => {
+                                        if (event.memberIds && event.memberIds.length > 0) {
+                                          event.memberIds.forEach(id => {
+                                            if (id !== 'everyone') involvedMemberIds.add(id);
+                                          });
+                                        }
+                                      });
 
-                        {/* Content Tile */}
-                        <div 
-                          className={cn(
-                            "rounded-2xl p-4 transition-all",
-                            event.type === 'travel' 
-                              ? "bg-transparent border border-dashed border-slate-200" 
-                              : "bg-white border border-slate-100 shadow-sm",
-                            isCurrent && "ring-1 ring-blue-100 border-blue-200",
-                            event.hidden && "opacity-50 grayscale"
-                          )}
-                        >
-                          {/* Header: Title & Time */}
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-2 min-w-0">
-                              <h4 className={cn(
-                                "text-sm font-bold text-slate-800 leading-tight",
-                                event.hidden && "line-through"
-                              )}>
-                                {event.title}
-                              </h4>
-                              {event.hidden && (
-                                <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200 shrink-0">
-                                  Cancelled
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              {(event.startTime || event.endTime) && (
-                                <span className="text-[10px] font-medium text-slate-400 flex items-center gap-1">
-                                  <Clock className="w-3 h-3" /> 
-                                  {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
-                                </span>
-                              )}
-                              {event.type === 'activity' && (
-                                <button 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleToggleHide(activeDayIdx, event.id);
-                                  }}
-                                  className={cn(
-                                    "p-1 transition-colors",
-                                    event.hidden ? "text-red-500 hover:text-red-600" : "text-slate-400 hover:text-blue-600"
-                                  )}
-                                  title={event.hidden ? "Show activity" : "Hide/Cancel activity"}
-                                >
-                                  {event.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* One-line Description */}
-                          {event.description && (
-                            <div className={cn(
-                              "text-[11px] text-slate-500 mt-1 leading-relaxed",
-                              !expandedEvents.has(event.id) && "line-clamp-1"
-                            )}>
-                              {event.description.split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
-                                part.match(/^https?:\/\//) ? (
-                                  <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline" onClick={(e) => e.stopPropagation()}>
-                                    {part}
-                                  </a>
-                                ) : part
-                              )}
-                            </div>
-                          )}
-
-                          {/* Location / Travel Details */}
-                          {event.type === 'travel' ? (
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-0">
-                                <span className="truncate">{event.origin?.name}</span>
-                                <ArrowRight className="w-3 h-3 shrink-0" />
-                                <span className="truncate">{event.destination?.name}</span>
-                              </div>
-                              {event.origin && event.destination && (
-                                <div className="flex gap-1 shrink-0">
-                                  <a 
-                                    href={(() => {
-                                      const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
-                                      // Using specific names and coordinate hinting for Apple Maps
-                                      const saddr = event.origin ? encodeURIComponent(event.origin.name) : '';
-                                      const daddr = event.destination ? encodeURIComponent(event.destination.name) : '';
-                                      let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${event.destination?.lat},${event.destination?.lng}&dirflg=${mode}`;
-                                      if (event.waypoints && event.waypoints.length > 0) {
-                                        url += `&to=${event.waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
+                                      // If no specific members, or only 'everyone', just show one column
+                                      if (involvedMemberIds.size === 0) {
+                                        return (
+                                          <div className="flex-1 min-w-[280px] snap-center flex flex-col gap-2">
+                                            {group.map((event) => (
+                                              <div key={event.id} className="flex-1 flex flex-col">
+                                                <EventTile 
+                                                  event={event} 
+                                                  dayIdx={activeDayIdx}
+                                                  eventIdx={event.originalIdx!}
+                                                  isGrouped={true}
+                                                />
+                                              </div>
+                                            ))}
+                                          </div>
+                                        );
                                       }
-                                      return url;
-                                    })()}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                                    title="Apple Maps Directions"
-                                  >
-                                    <Navigation className="w-3 h-3" />
-                                  </a>
-                                  <a 
-                                    href={(() => {
-                                      const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
-                                      const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
-                                      return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin.name)}&destination=${encodeURIComponent(event.destination.name)}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
-                                    })()}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                                    title="Google Maps Directions"
-                                  >
-                                    <MapIcon className="w-3 h-3" />
-                                  </a>
-                                </div>
-                              )}
-                            </div>
-                          ) : event.location && (
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-1 min-w-0">
-                                <MapPin className="w-3 h-3 text-slate-400" />
-                                <span className="text-[10px] text-slate-400 font-medium truncate">
-                                  {event.location.name}
-                                </span>
-                              </div>
-                              <div className="flex gap-1 shrink-0">
-                                <a 
-                                  href={getAppleMapsUrl(event.location)} 
-                                  target="_blank" 
-                                  rel="noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                                >
-                                  <Navigation className="w-3 h-3" />
-                                </a>
-                                <a 
-                                  href={getGoogleMapsUrl(event.location)} 
-                                  target="_blank" 
-                                  rel="noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                                >
-                                  <MapIcon className="w-3 h-3" />
-                                </a>
-                              </div>
-                            </div>
-                          )}
 
-                          {/* Expanded Content */}
-                          {expandedEvents.has(event.id) && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              className="overflow-hidden"
-                            >
-                              {event.description?.toLowerCase().includes('dog') && (
-                                <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 text-orange-600 text-[8px] font-black uppercase rounded-full">
-                                  <Dog className="w-2 h-2" /> Dog Friendly
-                                </div>
-                              )}
+                                      // Create a column for each involved member
+                                      const sortedMemberIds = Array.from(involvedMemberIds).sort((a, b) => {
+                                        const aIdx = masterTravellers.findIndex(m => m.id === a);
+                                        const bIdx = masterTravellers.findIndex(m => m.id === b);
+                                        return aIdx - bIdx;
+                                      });
 
-                              {event.suggestions && event.suggestions.length > 0 && (
-                                <div className="mt-4 space-y-2">
-                                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Suggestions</p>
-                                  <div className="grid grid-cols-1 gap-2">
-                                    {event.suggestions.map((sug, sIdx) => (
-                                      <button
-                                        key={sIdx}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleSelectSuggestion(activeDay.id, event.id, sug);
-                                        }}
-                                        className={cn(
-                                          "text-left p-2.5 rounded-xl border transition-all",
-                                          event.location?.name === sug.name 
-                                            ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-100' 
-                                            : 'bg-slate-50 border-slate-100 hover:border-slate-200'
-                                        )}
-                                      >
-                                        <div className="flex justify-between items-start">
-                                          <div className="min-w-0">
-                                            <p className="text-xs font-bold text-slate-700 truncate">{sug.name}</p>
-                                            <p className="text-[9px] text-slate-400 truncate">{sug.description}</p>
+                                      return sortedMemberIds.map(mid => {
+                                        const memberEvents = group.filter(e => 
+                                          !e.memberIds || 
+                                          e.memberIds.length === 0 || 
+                                          e.memberIds.includes('everyone') || 
+                                          e.memberIds.includes(mid)
+                                        );
+                                        
+                                        if (memberEvents.length === 0) return null;
+
+                                        return (
+                                          <div key={mid} className="flex-1 min-w-[280px] snap-center flex flex-col gap-2">
+                                            <div className="px-3 py-1 bg-slate-50 rounded-lg border border-slate-100 mb-1">
+                                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                                {masterTravellers.find(m => m.id === mid)?.name || mid}
+                                              </p>
+                                            </div>
+                                            {memberEvents.map((event) => (
+                                              <div key={event.id} className="flex-1 flex flex-col">
+                                                <EventTile 
+                                                  event={event} 
+                                                  dayIdx={activeDayIdx}
+                                                  eventIdx={event.originalIdx!}
+                                                  isGrouped={true}
+                                                />
+                                              </div>
+                                            ))}
                                           </div>
-                                          <div className="flex gap-1 shrink-0 ml-2">
-                                            <a 
-                                              href={getAppleMapsUrl(sug)}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              onClick={(e) => e.stopPropagation()}
-                                              className="p-1 text-slate-400 hover:text-blue-600"
-                                            >
-                                              <Navigation className="w-2.5 h-2.5" />
-                                            </a>
-                                            <a 
-                                              href={getGoogleMapsUrl(sug)}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              onClick={(e) => e.stopPropagation()}
-                                              className="p-1 text-slate-400 hover:text-blue-600"
-                                            >
-                                              <MapIcon className="w-2.5 h-2.5" />
-                                            </a>
-                                          </div>
-                                        </div>
-                                      </button>
-                                    ))}
+                                        );
+                                      });
+                                    })()}
                                   </div>
-                                </div>
-                              )}
-                            </motion.div>
-                          )}
-                        </div>
-
-                        {/* Edit Button */}
-                        {isEditing && isAdmin && event.originalIdx !== undefined && (
-                          <button 
-                            onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: event.originalIdx! })}
-                            className="absolute -top-1 -right-1 p-1.5 bg-blue-600 text-white rounded-full shadow-lg z-20"
-                          >
-                            <Edit2 className="w-2.5 h-2.5" />
-                          </button>
-                        )}
+                                ) : (
+                                  <EventTile 
+                                    event={group[0]} 
+                                    dayIdx={activeDayIdx}
+                                    eventIdx={group[0].originalIdx!}
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
                       </div>
                     );
-                  })
-                })()}
+                  })()}
                 </div>
     
                   {isEditing && (
@@ -2393,7 +3183,21 @@ export default function App() {
                   )}
               </div>
             </motion.div>
-          )}
+          ) : (
+            <div className="p-12 text-center">
+              <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Calendar className="w-8 h-8 text-slate-200" />
+              </div>
+              <p className="text-slate-400 text-sm">No itinerary data available for this day.</p>
+              <button 
+                onClick={() => setView('list')}
+                className="mt-4 text-blue-600 text-xs font-bold hover:underline"
+              >
+                Back to Trips
+              </button>
+            </div>
+          )
+        )}
 
           {activeTab === 'places' && (
             <motion.div key="places" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
@@ -2416,71 +3220,211 @@ export default function App() {
           {activeTab === 'info' && (
             <motion.div key="info" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
               <div className="p-6 space-y-8 bg-slate-50 min-h-full pb-32">
-                <section>
-                  <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <Plane className="w-5 h-5 text-blue-600" /> Flight Info
-                  </h2>
-                  <div className="space-y-3">
+                {/* Trip Members */}
+                {members && members.length > 0 && (
+                  <section>
+                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Briefcase className="w-5 h-5 text-blue-600" /> Trip Members
+                    </h2>
+                    <div className="grid grid-cols-2 gap-3">
+                      {members.map((member) => (
+                        <div key={member.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
+                          <div 
+                            className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-black text-white shadow-sm shrink-0"
+                            style={{ backgroundColor: member.color }}
+                          >
+                            {member.initials}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-900 truncate">{member.name}</p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Member</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {hasFlightInfo && (
+                  <section>
+                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Plane className="w-5 h-5 text-blue-600" /> Flight Info
+                    </h2>
+                    <div className="space-y-3">
+                      {flightInfo.outbound && (
+                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                          <div className="flex justify-between items-start mb-2">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Outbound • {flightInfo.outbound.date || 'TBD'}</p>
+                            <div className="text-right">
+                              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {flightInfo.outbound.confirmation || 'N/A'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <div><p className="text-xl font-bold text-slate-900">{flightInfo.outbound.from || 'TBD'}</p></div>
+                            <div className="flex flex-col items-center px-4 flex-1">
+                              <p className="text-[10px] font-bold text-blue-600 mb-1">{flightInfo.outbound.number || '---'}</p>
+                              <div className="w-full h-[1px] bg-slate-200 relative"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
+                            </div>
+                            <div className="text-right"><p className="text-xl font-bold text-slate-900">{flightInfo.outbound.to || 'TBD'}</p></div>
+                          </div>
+                        </div>
+                      )}
+                      {flightInfo.return && (
+                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                          <div className="flex justify-between items-start mb-2">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Return • {flightInfo.return.date || 'TBD'}</p>
+                            <div className="text-right">
+                              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {flightInfo.return.confirmation || 'N/A'}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <div><p className="text-xl font-bold text-slate-900">{flightInfo.return.from || 'TBD'}</p></div>
+                            <div className="flex flex-col items-center px-4 flex-1">
+                              <p className="text-[10px] font-bold text-blue-600 mb-1">{flightInfo.return.number || '---'}</p>
+                              <div className="w-full h-[1px] bg-slate-200 relative rotate-180"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
+                            </div>
+                            <div className="text-right"><p className="text-xl font-bold text-slate-900">{flightInfo.return.to || 'TBD'}</p></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                )}
+                
+                {hasRentalInfo && (
+                  <section>
+                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Car className="w-5 h-5 text-blue-600" /> Rental Car
+                    </h2>
                     <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                      <div className="flex justify-between items-start mb-2">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Outbound • {FLIGHT_DETAILS.outbound.date}</p>
-                        <div className="text-right">
-                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {FLIGHT_DETAILS.outbound.confirmation}</p>
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="font-bold text-slate-900">{rentalInfo.company || 'Rental Car'}</h3>
+                          <p className="text-xs text-slate-500">{rentalInfo.car || 'Vehicle Details'}</p>
+                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mt-1">Ref: {rentalInfo.confirmation || 'N/A'}</p>
+                        </div>
+                        <div className="p-2 bg-blue-50 rounded-full"><Car className="w-5 h-5 text-blue-600" /></div>
+                      </div>
+                      <div className="space-y-2 mb-4">
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-400 font-bold uppercase">Pickup</span>
+                          <span className="text-slate-700 font-medium">{rentalInfo.pickup || 'TBD'}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="text-slate-400 font-bold uppercase">Dropoff</span>
+                          <span className="text-slate-700 font-medium">{rentalInfo.dropoff || 'TBD'}</span>
                         </div>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <div><p className="text-xl font-bold text-slate-900">YYZ</p><p className="text-xs text-slate-500">09:30 AM</p></div>
-                        <div className="flex flex-col items-center px-4 flex-1">
-                          <p className="text-[10px] font-bold text-blue-600 mb-1">{FLIGHT_DETAILS.outbound.number}</p>
-                          <div className="w-full h-[1px] bg-slate-200 relative"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
+                      {rentalInfo.phone && (
+                        <a href={`tel:${rentalInfo.phone}`} className="w-full flex items-center justify-center gap-2 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold">Call {rentalInfo.company} <ExternalLink className="w-4 h-4" /></a>
+                      )}
+                    </div>
+                  </section>
+                )}
+
+                {stays && stays.length > 0 && (
+                  <section>
+                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Home className="w-5 h-5 text-blue-600" /> Stays
+                    </h2>
+                    <div className="space-y-3">
+                      {stays.map((stay, idx) => (
+                        <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="font-bold text-slate-900">{stay.name}</h3>
+                            <div className="p-2 bg-blue-50 rounded-full"><Home className="w-4 h-4 text-blue-600" /></div>
+                          </div>
+                          <div className="space-y-1 mb-3">
+                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {stay.location}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{stay.checkIn} — {stay.checkOut}</p>
+                          </div>
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-50">
+                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {stay.confirmation || 'N/A'}</p>
+                            {stay.phone && (
+                              <a href={`tel:${stay.phone}`} className="text-[10px] font-bold text-slate-900 flex items-center gap-1">
+                                <ExternalLink className="w-3 h-3" /> Call
+                              </a>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-right"><p className="text-xl font-bold text-slate-900">PHX</p><p className="text-xs text-slate-500">11:04 AM</p></div>
-                      </div>
+                      ))}
                     </div>
-                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                      <div className="flex justify-between items-start mb-2">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Return • {FLIGHT_DETAILS.return.date}</p>
-                        <div className="text-right">
-                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {FLIGHT_DETAILS.return.confirmation}</p>
+                  </section>
+                )}
+
+                {restaurants && restaurants.length > 0 && (
+                  <section>
+                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Utensils className="w-5 h-5 text-blue-600" /> Dining Reservations
+                    </h2>
+                    <div className="space-y-3">
+                      {restaurants.map((res, idx) => (
+                        <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="font-bold text-slate-900">{res.name}</h3>
+                            <div className="p-2 bg-blue-50 rounded-full"><Utensils className="w-4 h-4 text-blue-600" /></div>
+                          </div>
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              <Calendar className="w-3 h-3" /> {res.date}
+                            </div>
+                            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                              <Clock className="w-3 h-3" /> {res.time}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-50">
+                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {res.confirmation || 'N/A'}</p>
+                            {res.phone && (
+                              <a href={`tel:${res.phone}`} className="text-[10px] font-bold text-slate-900 flex items-center gap-1">
+                                <ExternalLink className="w-3 h-3" /> Call
+                              </a>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div><p className="text-xl font-bold text-slate-900">PHX</p><p className="text-xs text-slate-500">12:05 PM</p></div>
-                        <div className="flex flex-col items-center px-4 flex-1">
-                          <p className="text-[10px] font-bold text-blue-600 mb-1">{FLIGHT_DETAILS.return.number}</p>
-                          <div className="w-full h-[1px] bg-slate-200 relative rotate-180"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {experiences && experiences.length > 0 && (
+                  <section>
+                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                      <Ticket className="w-5 h-5 text-blue-600" /> Experiences
+                    </h2>
+                    <div className="space-y-3">
+                      {experiences.map((exp, idx) => (
+                        <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="font-bold text-slate-900">{exp.name}</h3>
+                            <div className="p-2 bg-blue-50 rounded-full"><Ticket className="w-4 h-4 text-blue-600" /></div>
+                          </div>
+                          <div className="space-y-1 mb-3">
+                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {exp.location || 'TBD'}</p>
+                            <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                <Calendar className="w-3 h-3" /> {exp.date}
+                              </div>
+                              <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                <Clock className="w-3 h-3" /> {exp.time}
+                              </div>
+                            </div>
+                          </div>
+                          {exp.confirmation && (
+                            <div className="pt-2 border-t border-slate-50">
+                              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {exp.confirmation}</p>
+                            </div>
+                          )}
                         </div>
-                        <div className="text-right"><p className="text-xl font-bold text-slate-900">YYZ</p><p className="text-xs text-slate-500">07:19 PM</p></div>
-                      </div>
+                      ))}
                     </div>
-                  </div>
-                </section>
-                <section>
-                  <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <Car className="w-5 h-5 text-blue-600" /> Rental Car
-                  </h2>
-                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h3 className="font-bold text-slate-900">{RENTAL_DETAILS.company}</h3>
-                        <p className="text-xs text-slate-500">{RENTAL_DETAILS.car}</p>
-                        <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mt-1">Ref: {RENTAL_DETAILS.confirmation}</p>
-                      </div>
-                      <div className="p-2 bg-blue-50 rounded-full"><Car className="w-5 h-5 text-blue-600" /></div>
-                    </div>
-                    <div className="space-y-2 mb-4">
-                      <div className="flex justify-between text-[10px]">
-                        <span className="text-slate-400 font-bold uppercase">Pickup</span>
-                        <span className="text-slate-700 font-medium">{RENTAL_DETAILS.pickup}</span>
-                      </div>
-                      <div className="flex justify-between text-[10px]">
-                        <span className="text-slate-400 font-bold uppercase">Dropoff</span>
-                        <span className="text-slate-700 font-medium">{RENTAL_DETAILS.dropoff}</span>
-                      </div>
-                    </div>
-                    <a href={`tel:${RENTAL_DETAILS.phone}`} className="w-full flex items-center justify-center gap-2 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold">Call Alamo <ExternalLink className="w-4 h-4" /></a>
-                  </div>
-                </section>
+                  </section>
+                )}
+
+                {!hasFlightInfo && !hasRentalInfo && (!stays || stays.length === 0) && (!restaurants || restaurants.length === 0) && (!experiences || experiences.length === 0) && (
+                  <section className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
+                    <p className="text-slate-400 text-sm">No reservation details available for this trip.</p>
+                  </section>
+                )}
 
                 {isAdmin && (
                   <section className="pt-4 border-t border-slate-200">
@@ -2495,13 +3439,15 @@ export default function App() {
                         onClick={() => {
                           if (window.confirm('Reset current trip to the default template? This will overwrite any manual changes in Firestore.')) {
                             setItinerary(ITINERARY_DATA);
-                            saveToFirestore(ITINERARY_DATA);
+                            setStays(STAY_DETAILS);
+                            setRestaurants(RESTAURANT_DETAILS);
+                            saveToFirestore(ITINERARY_DATA, 'Arizona 2026', 'May 14 - May 19', false, [], undefined, FLIGHT_DETAILS, RENTAL_DETAILS, STAY_DETAILS, RESTAURANT_DETAILS);
                             alert('Itinerary reset to template successfully.');
                           }
                         }}
                         className="w-full py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md active:scale-95 transition-transform"
                       >
-                        Sync with Template
+                        Reset to Template
                       </button>
                     </div>
                   </section>
@@ -2626,17 +3572,19 @@ export default function App() {
       {/* Bottom Navigation */}
       {view === 'itinerary' && (
         <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-around items-center z-50">
-          <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")}>
+          <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")} title="View Itinerary">
             <Calendar className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Itinerary</span>
           </button>
-          <button onClick={() => setActiveTab('places')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'places' ? "text-blue-600" : "text-slate-400")}>
+          <button onClick={() => setActiveTab('places')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'places' ? "text-blue-600" : "text-slate-400")} title="View Shortlisted Places">
             <MapPin className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Places</span>
           </button>
-          <button onClick={() => setActiveTab('gas')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'gas' ? "text-blue-600" : "text-slate-400")}>
-            <Fuel className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Gas</span>
-          </button>
-          <button onClick={() => setActiveTab('info')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'info' ? "text-blue-600" : "text-slate-400")}>
-            <Info className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Details</span>
+          {hasDriving && rentalInfo && (
+            <button onClick={() => setActiveTab('gas')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'gas' ? "text-blue-600" : "text-slate-400")} title="Gas & Logistics">
+              <Fuel className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Gas</span>
+            </button>
+          )}
+          <button onClick={() => setActiveTab('info')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'info' ? "text-blue-600" : "text-slate-400")} title="Reservations & Bookings">
+            <Info className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Reservations</span>
           </button>
         </nav>
       )}
