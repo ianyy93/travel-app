@@ -1354,6 +1354,7 @@ export default function App() {
       setAiProposal(proposal);
       setRejectedSuggestionIds([]); // Reset rejections for new proposal
       setRejectedAssumptionIdxs([]); // Reset assumption rejections for new proposal
+      setRejectedCoreIds([]); // Reset core rejections for new proposal
       setShowAiAssistant(true); // Ensure panel is open to show proposal
       setAiPrompt('');
     } catch (err) {
@@ -2811,62 +2812,102 @@ export default function App() {
                     )}
 
                     {aiProposal.suggestions && aiProposal.suggestions.length > 0 && (
-                      <div className="mb-4">
-                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Optional Suggestions</h4>
-                        <div className="space-y-2">
-                          {aiProposal.suggestions.map((s) => (
-                            <div 
-                              key={s.id} 
-                              className={cn(
-                                "p-3 rounded-xl border transition-all flex items-center justify-between gap-3",
-                                rejectedSuggestionIds.includes(s.id) 
-                                  ? "bg-slate-50 border-slate-100 opacity-60" 
-                                  : "bg-white border-blue-100 shadow-sm"
-                              )}
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className={cn(
-                                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                                  s.type === 'activity' ? "bg-green-50 text-green-600" :
-                                  s.type === 'food' ? "bg-orange-50 text-orange-600" :
-                                  "bg-blue-50 text-blue-600"
-                                )}>
-                                  {s.type === 'activity' ? <MapPin className="w-4 h-4" /> :
-                                   s.type === 'food' ? <Utensils className="w-4 h-4" /> :
-                                   <Sparkles className="w-4 h-4" />}
-                                </div>
-                                <p className="text-xs font-medium text-slate-700 leading-tight">{s.text}</p>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <button 
-                                  onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: Suggestion "${s.text}": ` : `Re: Suggestion "${s.text}": `)}
-                                  className="p-1 px-2 hover:bg-blue-50 rounded-lg text-blue-400 transition-colors"
-                                  title="Add feedback for this suggestion"
-                                >
-                                  <MessageSquare className="w-3.5 h-3.5" />
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    if (rejectedSuggestionIds.includes(s.id)) {
-                                      setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
-                                    } else {
-                                      setRejectedSuggestionIds(prev => [...prev, s.id]);
-                                    }
-                                  }}
-                                  className={cn(
-                                    "w-6 h-6 rounded-full flex items-center justify-center transition-colors shadow-sm",
-                                    rejectedSuggestionIds.includes(s.id)
-                                      ? "bg-slate-200 text-slate-500"
-                                      : "bg-blue-600 text-white"
-                                  )}
-                                  title={rejectedSuggestionIds.includes(s.id) ? "Approve suggestion" : "Reject suggestion"}
-                                >
-                                  {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-3 h-3" /> : <Check className="w-3 h-3" />}
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
+                      <div className="space-y-4 mb-4">
+                        {(() => {
+                           const activitySugs = aiProposal.suggestions.filter(s => {
+                             const event = aiProposal.itinerary.flatMap(d => d.events).find(e => e.id === s.relatedId);
+                             return event?.category !== 'food' && s.type !== 'food';
+                           });
+                           const foodSugs = aiProposal.suggestions.filter(s => {
+                             const event = aiProposal.itinerary.flatMap(d => d.events).find(e => e.id === s.relatedId);
+                             return event?.category === 'food' || s.type === 'food';
+                           });
+
+                           return (
+                             <>
+                               {activitySugs.length > 0 && (
+                                 <div>
+                                   <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">New Activity Proposals</h4>
+                                   <div className="space-y-2">
+                                     {activitySugs.map((s) => (
+                                       <div 
+                                         key={s.id} 
+                                         className={cn(
+                                           "p-3 rounded-xl border transition-all flex items-center justify-between gap-3",
+                                           rejectedSuggestionIds.includes(s.id) 
+                                             ? "bg-slate-50 border-slate-100 opacity-60" 
+                                             : "bg-white border-blue-100 shadow-sm"
+                                         )}
+                                       >
+                                         <div className="flex items-center gap-3">
+                                           <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-green-50 text-green-600">
+                                              <MapPin className="w-4 h-4" />
+                                           </div>
+                                           <p className="text-xs font-medium text-slate-700 leading-tight">{s.text}</p>
+                                         </div>
+                                         <div className="flex items-center gap-1">
+                                           <button 
+                                             onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: "${s.text}": ` : `Re: "${s.text}": `)}
+                                             className="p-1 px-2 hover:bg-blue-50 rounded-lg text-blue-400 transition-colors"
+                                           >
+                                             <MessageSquare className="w-3.5 h-3.5" />
+                                           </button>
+                                           <button 
+                                             onClick={() => {
+                                               if (rejectedSuggestionIds.includes(s.id)) {
+                                                 setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
+                                               } else {
+                                                 setRejectedSuggestionIds(prev => [...prev, s.id]);
+                                               }
+                                             }}
+                                             className={cn(
+                                               "w-6 h-6 rounded-full flex items-center justify-center transition-colors shadow-sm",
+                                               rejectedSuggestionIds.includes(s.id)
+                                                 ? "bg-slate-200 text-slate-500"
+                                                 : "bg-blue-600 text-white"
+                                             )}
+                                           >
+                                             {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-3 h-3" /> : <Check className="w-3 h-3" />}
+                                           </button>
+                                         </div>
+                                       </div>
+                                     ))}
+                                   </div>
+                                 </div>
+                               )}
+
+                               {foodSugs.length > 0 && (
+                                 <div>
+                                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Restaurant Suggestions (Pre-selected)</h4>
+                                   <div className="flex flex-wrap gap-2">
+                                     {foodSugs.map((s) => (
+                                       <button 
+                                         key={s.id} 
+                                         onClick={() => {
+                                           if (rejectedSuggestionIds.includes(s.id)) {
+                                             setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
+                                           } else {
+                                             setRejectedSuggestionIds(prev => [...prev, s.id]);
+                                           }
+                                         }}
+                                         className={cn(
+                                           "px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all",
+                                           rejectedSuggestionIds.includes(s.id)
+                                             ? "bg-slate-50 border-slate-100 text-slate-400"
+                                             : "bg-orange-50 border-orange-100 text-orange-700"
+                                         )}
+                                       >
+                                         <Utensils className="w-2.5 h-2.5" />
+                                         {s.text}
+                                         {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-2 h-2 ml-0.5" /> : <X className="w-2 h-2 ml-0.5" />}
+                                       </button>
+                                     ))}
+                                   </div>
+                                 </div>
+                               )}
+                             </>
+                           );
+                        })()}
                       </div>
                     )}
 
@@ -2929,6 +2970,7 @@ export default function App() {
                     {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0 || rejectedCoreIds.length > 0) && (
                       <div className="mb-4 p-4 bg-red-50 rounded-2xl border border-red-100 shadow-sm text-center">
                         <button 
+                          disabled={isAiLoading}
                           onClick={() => {
                             const assumptionRejections = rejectedAssumptionIdxs.map(idx => aiProposal?.assumptions[idx]).join('; ');
                             const suggestionRejections = rejectedSuggestionIds.map(id => aiProposal?.suggestions?.find(s => s.id === id)?.text).filter(Boolean).join('; ');
@@ -2946,9 +2988,13 @@ export default function App() {
                             setAiPrompt(prev => prev ? `${prev}\n\n${feedback}` : feedback);
                             handleAiAction('full', (aiPrompt ? aiPrompt + '\n\n' : '') + feedback);
                           }}
-                          className="w-full py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-700 shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-2 active:scale-95"
+                          className={cn(
+                            "w-full py-3 text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 active:scale-95",
+                            isAiLoading ? "bg-slate-400 cursor-not-allowed" : "bg-red-600 hover:bg-red-700 shadow-red-200"
+                          )}
                         >
-                          <RefreshCw className="w-3.5 h-3.5" /> Regenerate Proposal with Feedback
+                          {isAiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                          {isAiLoading ? "Rethinking..." : "Regenerate Proposal with Feedback"}
                         </button>
                       </div>
                     )}

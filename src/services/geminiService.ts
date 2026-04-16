@@ -137,16 +137,17 @@ export const geminiService = {
       1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
       3. CORE vs OPTIONAL (CRITICAL):
-         - 'Core Itinerary' (Direct Matches): ONLY items explicitly named in the prompt.
-           * Example 1: User says "Buvette at 8pm" -> Core.
-           * Example 2: User says "flight PD 605" -> Core.
-           * Example 3: User says "Carrie works remote" -> Core.
-           * Baseline meal placeholders (Breakfast, Lunch, Dinner) are also core.
-         - 'Optional Suggestions' (AI Creative Input): ANY activity, place, or itinerary move NOT specifically named in the prompt.
+         - 'Core Itinerary' (Direct Matches): ONLY items explicitly requested to be *scheduled* in the prompt.
+           * Example 1: User says "Visit Buvette at 8pm" -> Core.
+           * Example 2: User says "Add my flight PD 605" -> Core.
+           * Example 3: User says "Include Carrie's remote work" -> Core.
+           * Baseline meal placeholders (Breakfast, Lunch, Dinner) are core.
+         - 'Optional Suggestions' (AI Creative Input): ANY activity, place, or move NOT specifically requested to be *scheduled*. 
+           * IMPORTANT: Even if a place is mentioned in the user's "Shortlist", if they didn't ask to put it on the calendar, it MUST be a Suggestion.
            * Example 1: You suggest "Central Park" (not in prompt) -> MUST be Optional Suggestion.
-           * Example 2: You suggest "Little Island" (not in prompt) -> MUST be Optional Suggestion.
-           * Example 3: You suggest a specific restaurant for a lunch placeholder -> MUST be Optional Suggestion.
-         - MANDATORY LINKING (ZERO TOLERANCE): If an event is NOT a meal placeholder and was NOT specifically named in the prompt, it MUST have a corresponding entry in the root 'suggestions' array. The 'relatedId' MUST match the event's 'id'.
+           * Example 2: You suggest "Little Island" (not explicitly asked to schedule) -> MUST be Optional Suggestion.
+           * Example 3: You suggest a restaurant for a meal placeholder -> MUST be Optional Suggestion.
+         - MANDATORY LINKING (ZERO TOLERANCE): If an event is NOT a meal placeholder and was NOT explicitly scheduled in the prompt, it MUST have a corresponding entry in the root 'suggestions' array.
       4. MEALS (MANDATORY):
          - Core: Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
          - Suggestions (STRICT): You MUST provide 3 specific restaurant names for every Breakfast, Lunch, and Dinner. These MUST be included in the top-level 'suggestions' array (linked via 'relatedId'). If a meal is explicitly "taken care of" or "included" in an event, mark it as 'logistics' or remove suggestions for that specific slot.
