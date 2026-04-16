@@ -1217,6 +1217,7 @@ export default function App() {
   const [aiProposal, setAiProposal] = useState<GeminiProposal | null>(null);
   const [rejectedSuggestionIds, setRejectedSuggestionIds] = useState<string[]>([]);
   const [rejectedAssumptionIdxs, setRejectedAssumptionIdxs] = useState<number[]>([]);
+  const [rejectedCoreIds, setRejectedCoreIds] = useState<string[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -1371,10 +1372,13 @@ export default function App() {
       const lastDayDate = aiProposal.itinerary[aiProposal.itinerary.length - 1]?.date || '';
       const inferredDates = firstDayDate && lastDayDate ? `${firstDayDate} - ${lastDayDate}` : '';
 
-      // Filter out rejected suggestions from itinerary
+      // Filter out rejected suggestions and unrequested core activities from itinerary
       const filteredItinerary = aiProposal.itinerary.map(day => ({
         ...day,
         events: day.events.filter(event => {
+          if (rejectedCoreIds.includes(event.id)) {
+            return false;
+          }
           const suggestion = aiProposal.suggestions?.find(s => s.relatedId === event.id);
           if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
             return false;
@@ -1490,6 +1494,7 @@ export default function App() {
       
       setAiProposal(null);
       setRejectedSuggestionIds([]);
+      setRejectedCoreIds([]);
       setShowAiAssistant(false);
     };
 
@@ -2882,14 +2887,34 @@ export default function App() {
                       if (nonMealCore.length > 0) {
                         return (
                           <div className="mb-4">
-                            <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Confirmed Additions</h4>
+                            <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Planned Activities (From Prompt)</h4>
                             <div className="flex flex-wrap gap-2">
                               {nonMealCore.map((e, idx) => (
-                                <div key={idx} className="px-2 py-1 bg-white border border-blue-100 rounded-lg text-[10px] font-bold text-blue-700 flex items-center gap-1 shadow-sm">
+                                <div 
+                                  key={idx} 
+                                  className={cn(
+                                    "px-2 py-1 border rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-sm transition-all",
+                                    rejectedCoreIds.includes(e.id)
+                                      ? "bg-slate-50 border-slate-100 text-slate-400 line-through opacity-60"
+                                      : "bg-white border-blue-100 text-blue-700"
+                                  )}
+                                >
                                   {e.category === 'flight' || e.category === 'logistics' ? <Plane className="w-2.5 h-2.5" /> : 
                                    e.category === 'work' ? <Briefcase className="w-2.5 h-2.5" /> :
                                    <MapPin className="w-2.5 h-2.5" />}
                                   {e.title}
+                                  <button 
+                                    onClick={() => {
+                                      if (rejectedCoreIds.includes(e.id)) {
+                                        setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
+                                      } else {
+                                        setRejectedCoreIds(prev => [...prev, e.id]);
+                                      }
+                                    }}
+                                    className="ml-1 hover:text-red-500 transition-colors"
+                                  >
+                                    {rejectedCoreIds.includes(e.id) ? <Plus className="w-2.5 h-2.5" /> : <X className="w-2.5 h-2.5" />}
+                                  </button>
                                 </div>
                               ))}
                             </div>
@@ -2901,16 +2926,21 @@ export default function App() {
 
                     {/* Consistently handled below */}
 
-                    {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0) && (
+                    {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0 || rejectedCoreIds.length > 0) && (
                       <div className="mb-4 p-4 bg-red-50 rounded-2xl border border-red-100 shadow-sm text-center">
                         <button 
                           onClick={() => {
                             const assumptionRejections = rejectedAssumptionIdxs.map(idx => aiProposal?.assumptions[idx]).join('; ');
                             const suggestionRejections = rejectedSuggestionIds.map(id => aiProposal?.suggestions?.find(s => s.id === id)?.text).filter(Boolean).join('; ');
+                            const coreRejections = rejectedCoreIds.map(id => {
+                              const event = aiProposal.itinerary.flatMap(d => d.events).find(ev => ev.id === id);
+                              return event?.title;
+                            }).filter(Boolean).join('; ');
                             
                             let feedback = '';
                             if (assumptionRejections) feedback += `REJECT ASSUMPTIONS: ${assumptionRejections}. `;
                             if (suggestionRejections) feedback += `REJECT SUGGESTIONS: ${suggestionRejections}. `;
+                            if (coreRejections) feedback += `REJECT PLANNED ACTIVITIES (I didn't ask for these): ${coreRejections}. `;
                             feedback += `Please rethink the itinerary and provide alternatives or adjustments.`;
                             
                             setAiPrompt(prev => prev ? `${prev}\n\n${feedback}` : feedback);

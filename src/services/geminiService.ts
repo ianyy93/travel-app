@@ -137,9 +137,16 @@ export const geminiService = {
       1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
       3. CORE vs OPTIONAL (CRITICAL):
-         - 'Core Itinerary': ONLY requested events from the prompt (e.g. flights, specific meetings, requested work) and baseline meal placeholders (Breakfast, Lunch, Dinner).
-         - 'Optional Suggestions': ANY AI-suggested activity (e.g., Central Park, Museums), specific restaurant choice, or logistical move (e.g., hotel change).
-         - MANDATORY LINKING (STRICT): Every 'Optional' event MUST have a clear entry in the 'suggestions' array. The event's 'id' MUST match the suggestion's 'relatedId'. If it's not in the 'suggestions' array, it's considered Core and is WRONG if it wasn't requested.
+         - 'Core Itinerary' (Direct Matches): ONLY items explicitly named in the prompt.
+           * Example 1: User says "Buvette at 8pm" -> Core.
+           * Example 2: User says "flight PD 605" -> Core.
+           * Example 3: User says "Carrie works remote" -> Core.
+           * Baseline meal placeholders (Breakfast, Lunch, Dinner) are also core.
+         - 'Optional Suggestions' (AI Creative Input): ANY activity, place, or itinerary move NOT specifically named in the prompt.
+           * Example 1: You suggest "Central Park" (not in prompt) -> MUST be Optional Suggestion.
+           * Example 2: You suggest "Little Island" (not in prompt) -> MUST be Optional Suggestion.
+           * Example 3: You suggest a specific restaurant for a lunch placeholder -> MUST be Optional Suggestion.
+         - MANDATORY LINKING (ZERO TOLERANCE): If an event is NOT a meal placeholder and was NOT specifically named in the prompt, it MUST have a corresponding entry in the root 'suggestions' array. The 'relatedId' MUST match the event's 'id'.
       4. MEALS (MANDATORY):
          - Core: Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
          - Suggestions (STRICT): You MUST provide 3 specific restaurant names for every Breakfast, Lunch, and Dinner. These MUST be included in the top-level 'suggestions' array (linked via 'relatedId'). If a meal is explicitly "taken care of" or "included" in an event, mark it as 'logistics' or remove suggestions for that specific slot.
