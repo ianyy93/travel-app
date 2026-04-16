@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Calendar, 
@@ -515,6 +515,23 @@ const EditActivityModal = ({
                 <option value="work">Work</option>
               </select>
             </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Manual Category (Places Tab)</label>
+              <select 
+                value={edited.manualCategory || ''}
+                onChange={e => setEdited({ ...edited, manualCategory: e.target.value || undefined })}
+                className="w-full p-3 bg-slate-50 rounded-xl border border-slate-100 focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="">Auto (Based on Category)</option>
+                <option value="attraction">Attraction</option>
+                <option value="restaurant">Restaurant</option>
+                <option value="shopping">Shopping</option>
+                <option value="stay">Stay</option>
+                <option value="logistics">Logistics</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col">
               <label className="text-[10px] font-bold text-slate-400 uppercase">Status</label>
               <button
@@ -661,100 +678,144 @@ const PlacesView = ({
   shortlist, 
   onAddShortlist, 
   onRemoveShortlist,
-  isAdmin 
+  isAdmin,
+  onUpdateItinerary,
+  onSaveToFirestore,
+  onNavigateToEvent
 }: { 
   itinerary: DayPlan[], 
   shortlist: any[], 
   onAddShortlist: (place: any) => void,
   onRemoveShortlist: (id: string) => void,
-  isAdmin: boolean 
+  isAdmin: boolean,
+  onUpdateItinerary: (newItinerary: DayPlan[]) => void,
+  onSaveToFirestore: (newItinerary: DayPlan[]) => void,
+  onNavigateToEvent: (dayIdx: number, eventId: string) => void
 }) => {
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
 
   // Extract all places from itinerary
-  const itineraryPlaces = useMemo(() => {
+    const itineraryPlaces = useMemo(() => {
+    if (!itinerary || !Array.isArray(itinerary)) return [];
     const places: any[] = [];
-    const seen = new Set<string>();
-    const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south', 'dinner', 'lunch', 'breakfast', 'meal', 'brunch', 'food', 'restaurant', 'cafe'];
+    const seen = new Map<string, any>();
+    
+    // Rule #2: Logistics keywords
+    const isLogistics = (name: string | undefined, category: string | undefined) => {
+      if (category === 'flight' || category === 'transit' || category === 'drive') return true;
+      if (!name) return false;
+      const lowerName = name.toLowerCase();
+      const logisticsKeywords = ['airport', 'rental car', 'gas station', 'parking', 'shuttle', 'yyz', 'phx', 'jfk', 'lax', 'sfo', 'lga', 'ewr', 'flight', 'transit', 'uber', 'lyft', 'taxi', 'terminal', 'shuttle', 'subway station', 'train station', 'bus station', 'car center'];
+      return logisticsKeywords.some(k => lowerName.includes(k));
+    };
 
-    const addPlace = (loc: Location, category: string, id: string, dayDate: string, description?: string) => {
+    // Rule #5: Shopping keywords
+    const isShopping = (name: string | undefined, description: string | undefined) => {
+      const lowerName = (name || '').toLowerCase();
+      const lowerDesc = (description || '').toLowerCase();
+      const shopKeywords = ['shop', 'store', 'mall', 'market', 'boutique', 'plaza', 'outlet', 'trading post', 'gallery', 'tlaquepaque'];
+      return shopKeywords.some(k => lowerName.includes(k) || lowerDesc.includes(k));
+    };
+
+    const addPlace = (loc: Location, category: string, id: string, dayDate: string, description?: string, manualCategory?: string, eventId?: string, dayIdx?: number) => {
       if (!loc || !loc.name) return;
       
-      // Filter out generic neighborhoods/areas/meal-placeholders
-      const lowerName = loc.name.toLowerCase();
-      // If it's just 1-2 words and contains a generic term, it's likely a placeholder
-      if (genericTerms.some(term => lowerName.includes(term) && lowerName.split(' ').length <= 3)) return;
-
       const key = `${loc.name}-${loc.lat || 0}-${loc.lng || 0}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      places.push({
+      const existing = seen.get(key);
+      
+      if (existing) {
+        // Add visit to existing place
+        if (dayIdx !== undefined && eventId && !existing.visits.some((v: any) => v.dayIdx === dayIdx && v.eventId === eventId)) {
+          existing.visits.push({ dayDate, dayIdx, eventId });
+          // Sort visits by dayIdx
+          existing.visits.sort((a: any, b: any) => a.dayIdx - b.dayIdx);
+        }
+        // If this visit has a manual category and the existing one doesn't, update it
+        if (manualCategory && !existing.manualCategory) {
+          existing.manualCategory = manualCategory;
+          existing.category = manualCategory;
+        }
+        return;
+      }
+      
+      const newPlace = {
         id,
         name: loc.name,
-        category,
+        category: manualCategory || category,
         location: loc,
         source: 'itinerary',
-        dayDate,
-        description: description || loc.description
-      });
+        visits: dayIdx !== undefined && eventId ? [{ dayDate, dayIdx, eventId }] : [],
+        description: description || loc.description,
+        manualCategory,
+        eventId,
+        dayIdx
+      };
+      
+      seen.set(key, newPlace);
+      places.push(newPlace);
     };
 
-    const isStay = (name: string | undefined, eventCat: string | undefined) => {
-      if (!name) return false;
-      const lowerName = name.toLowerCase();
-      const stayKeywords = ['hotel', 'inn', 'suites', 'resort', 'stay', 'airbnb', 'hostel', 'lodge', 'camp', 'glamping', 'villa', 'apartment', 'residence', 'cottage', 'cabin'];
-      if (stayKeywords.some(k => lowerName.includes(k))) return true;
-      return eventCat === 'stay';
-    };
-
-    const isRestaurant = (name: string | undefined, eventCat: string | undefined) => {
-      if (!name) return false;
-      const lowerName = name.toLowerCase();
-      const foodKeywords = ['restaurant', 'cafe', 'bistro', 'diner', 'grill', 'bar', 'pub', 'kitchen', 'eatery', 'bakery', 'coffee', 'tea', 'dining', 'steakhouse', 'sushi', 'pizza', 'burger', 'deli'];
-      if (foodKeywords.some(k => lowerName.includes(k))) return true;
-      return eventCat === 'food';
-    };
-
-    const isLogistics = (name: string | undefined, eventCat: string | undefined) => {
-      if (!name) return false;
-      const lowerName = name.toLowerCase();
-      // Be more specific with keywords to avoid false positives (like "Museum of the Dog" or "LouLou")
-      const logisticsKeywords = ['airport', 'rental car', 'gas station', 'parking', 'shuttle', 'yyz', 'phx', 'jfk', 'lax', 'sfo', 'lga', 'ewr', 'flight', 'transit', 'uber', 'lyft', 'taxi', 'terminal', 'shuttle', 'subway station', 'train station', 'bus station'];
-      if (logisticsKeywords.some(k => lowerName.includes(k))) return true;
-      if (eventCat === 'flight' || eventCat === 'transit') return true;
-      return false;
-    };
-
-    itinerary.forEach(day => {
+    itinerary.forEach((day, dayIdx) => {
+      if (!day || !day.events) return;
       day.events.forEach(event => {
-        // Skip generic locations (neighborhoods/areas) that don't represent a specific venue
-        const isGenericLocation = event.location && genericTerms.some(term => {
-          const lowerLoc = event.location!.name.toLowerCase();
-          return lowerLoc.includes(term) && lowerLoc.split(' ').length <= 2;
-        });
+        // Rule #3: Skip meal suggestion tiles without selection
+        // A suggestion tile is one with suggestions but no specific location (or generic location)
+        const lowerLoc = event.location?.name.toLowerCase() || '';
+        const isGeneric = event.location && (
+          (lowerLoc.includes(' area') || lowerLoc.includes(' neighborhood')) ||
+          (lowerLoc.split(',').length <= 2 && /\d{5}/.test(lowerLoc)) // Generic if it's just "City, ST Zip"
+        );
+        const isUnselectedSuggestion = event.suggestions && event.suggestions.length > 0 && (!event.location || (isGeneric && !event.manualCategory));
         
-        if (event.location && !isGenericLocation) {
-          let cat = 'attraction';
-          // Check stay and restaurant FIRST to avoid mis-categorizing them as logistics if they contain "Station" etc.
-          if (isStay(event.location.name, event.category)) cat = 'stay';
-          else if (isRestaurant(event.location.name, event.category)) cat = 'restaurant';
-          else if (isLogistics(event.location.name, event.category)) cat = 'logistics';
+        if (isUnselectedSuggestion) return;
+
+        // Skip generic locations unless manually overridden
+        if (event.location && isGeneric && !event.manualCategory) return;
+        
+        if (event.location) {
+          let cat = 'attraction'; // Rule #6: Default
           
-          addPlace(event.location, cat, `itinerary-${event.id}`, day.date, event.description);
+          // Manual Override always first
+          if (event.manualCategory) {
+            cat = event.manualCategory;
+          } else {
+            // Rule #1: Stays
+            if (event.category === 'stay') {
+              cat = 'stay';
+            }
+            // Rule #2: Logistics
+            else if (isLogistics(event.location.name, event.category)) {
+              cat = 'logistics';
+            }
+            // Rule #4: Restaurants
+            else if (event.category === 'food') {
+              cat = 'restaurant';
+            }
+            // Rule #5: Shopping
+            else if (isShopping(event.location.name, event.description)) {
+              cat = 'shopping';
+            }
+          }
+          
+          addPlace(event.location, cat, `itinerary-${event.id}`, day.date, event.description, event.manualCategory, event.id, dayIdx);
         }
-        if (event.origin) {
-          let cat = 'attraction';
-          if (isStay(event.origin.name, event.category)) cat = 'stay';
-          else if (isLogistics(event.origin.name, event.category)) cat = 'logistics';
-          addPlace(event.origin, cat, `itinerary-${event.id}-origin`, day.date, event.description);
+        
+        if (event.waypoints && event.waypoints.length > 0) {
+          event.waypoints.forEach((wp, wpIdx) => {
+            addPlace(wp, 'attraction', `itinerary-${event.id}-wp-${wpIdx}`, day.date, event.description, undefined, event.id, dayIdx);
+          });
         }
-        if (event.destination) {
-          let cat = 'attraction';
-          if (isStay(event.destination.name, event.category)) cat = 'stay';
-          else if (isLogistics(event.destination.name, event.category)) cat = 'logistics';
-          addPlace(event.destination, cat, `itinerary-${event.id}-dest`, day.date, event.description);
+        
+        // Handle travel events (only if they are stays or logistics)
+        if (!event.manualCategory) {
+          if (event.origin && event.category === 'stay') {
+            addPlace(event.origin, 'stay', `itinerary-${event.id}-origin`, day.date, event.description, undefined, event.id, dayIdx);
+          }
+          if (event.destination && event.category === 'stay') {
+            addPlace(event.destination, 'stay', `itinerary-${event.id}-dest`, day.date, event.description, undefined, event.id, dayIdx);
+          }
         }
       });
     });
@@ -765,112 +826,159 @@ const PlacesView = ({
 
   const filteredPlaces = allPlaces.filter(p => {
     const matchesFilter = filter === 'all' || p.category === filter;
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = (p.name || '').toLowerCase().includes(search.toLowerCase());
     return matchesFilter && matchesSearch;
   });
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 pb-32 space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-black text-slate-900 tracking-tight">Places</h2>
-        <div className="flex gap-2">
-          <button 
-            onClick={() => {
-              // Force a re-render of itineraryPlaces by slightly modifying search (hacky but works for quick sync)
-              setSearch(s => s + ' ');
-              setTimeout(() => setSearch(s => s.trim()), 10);
-            }}
-            className="p-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition-colors"
-            title="Refresh from itinerary"
-          >
-            <RefreshCw className="w-5 h-5" />
-          </button>
-          {isAdmin && (
+    <div className="w-full">
+      {/* Sticky Header */}
+      <div className="sticky top-0 z-[100] bg-slate-50/95 backdrop-blur-md p-6 pb-4 space-y-6 border-b border-slate-100 shadow-sm w-full">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Places</h2>
+          <div className="flex gap-2">
             <button 
-              onClick={() => setShowAddModal(true)}
-              className="p-2 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-100"
+              onClick={() => {
+                // Force a re-render of itineraryPlaces by slightly modifying search (hacky but works for quick sync)
+                setSearch(s => s + ' ');
+                setTimeout(() => setSearch(s => s.trim()), 10);
+              }}
+              className="p-2 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200 transition-colors"
+              title="Refresh from itinerary"
             >
-              <Plus className="w-5 h-5" />
+              <RefreshCw className="w-5 h-5" />
             </button>
-          )}
+            {isAdmin && (
+              <button 
+                onClick={() => setShowAddModal(true)}
+                className="p-2 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-100"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Search & Filter */}
-      <div className="space-y-3">
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input 
-            type="text"
-            placeholder="Search places..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-          />
-        </div>
-        <div className="flex gap-2 overflow-x-auto scrollbar-hide py-1">
-          {['all', 'attraction', 'restaurant', 'shopping', 'stay', 'logistics'].map(cat => (
-            <button
-              key={cat}
-              onClick={() => setFilter(cat)}
-              className={cn(
-                "px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap",
-                filter === cat 
-                  ? "bg-slate-900 text-white border-slate-900" 
-                  : "bg-white text-slate-400 border-slate-100"
-              )}
-            >
-              {cat}
-            </button>
-          ))}
+        {/* Search & Filter */}
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input 
+              type="text"
+              placeholder="Search places..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+          </div>
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide py-1">
+            {['all', 'attraction', 'restaurant', 'shopping', 'stay', 'logistics', 'work'].map(cat => (
+              <button
+                key={cat}
+                onClick={() => setFilter(cat)}
+                className={cn(
+                  "px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap",
+                  filter === cat 
+                    ? "bg-slate-900 text-white border-slate-900" 
+                    : "bg-white text-slate-400 border-slate-100"
+                )}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Places List */}
-      <div className="grid gap-4">
+      <div className="p-6 pb-32 grid gap-4 w-full max-w-full overflow-x-hidden">
         {filteredPlaces.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
             <p className="text-slate-400 text-sm">No places found matching your filter.</p>
           </div>
         ) : (
           filteredPlaces.map((place, idx) => (
-            <div key={idx} className="bg-white p-4 rounded-3xl border border-slate-100 flex items-center justify-between group">
-              <div className="flex items-center gap-4">
+            <div key={idx} className="bg-white p-4 rounded-3xl border border-slate-100 flex items-start justify-between group w-full max-w-full overflow-hidden">
+              <div className="flex items-start gap-4 min-w-0 flex-1">
                 <div className={cn(
-                  "w-12 h-12 rounded-2xl flex items-center justify-center",
+                  "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 mt-1",
                   place.category === 'restaurant' ? "bg-orange-50 text-orange-600" :
                   place.category === 'shopping' ? "bg-purple-50 text-purple-600" :
                   place.category === 'stay' ? "bg-blue-50 text-blue-600" :
                   place.category === 'logistics' ? "bg-slate-100 text-slate-600" :
+                  place.category === 'work' ? "bg-blue-50 text-blue-600" :
                   "bg-green-50 text-green-600"
                 )}>
                   {place.category === 'restaurant' ? <Utensils className="w-5 h-5" /> :
                    place.category === 'shopping' ? <ShoppingBag className="w-5 h-5" /> :
                    place.category === 'stay' ? <Home className="w-5 h-5" /> :
                    place.category === 'logistics' ? <Plane className="w-5 h-5" /> :
+                   place.category === 'work' ? <Briefcase className="w-5 h-5" /> :
                    <MapPin className="w-5 h-5" />}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="font-bold text-slate-900 leading-tight truncate">{place.name}</h4>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-[10px] font-black uppercase tracking-tighter text-slate-400">
-                      {place.category}
-                    </span>
-                    {place.dayDate && (
-                      <span className="text-[10px] font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full">
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-bold text-slate-900 leading-tight break-words">{place.name}</h4>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    {place.source === 'itinerary' && isAdmin ? (
+                      <select 
+                        value={place.manualCategory || ''}
+                        onChange={(e) => {
+                          const newCat = e.target.value || undefined;
+                          const newItinerary = itinerary.map((d, dIdx) => {
+                            if (dIdx !== place.dayIdx) return d;
+                            return {
+                              ...d,
+                              events: d.events.map(ev => {
+                                if (ev.id !== place.eventId) return ev;
+                                return { ...ev, manualCategory: newCat };
+                              })
+                            };
+                          });
+                          onUpdateItinerary(newItinerary);
+                          onSaveToFirestore(newItinerary);
+                        }}
+                        className="text-[10px] font-black uppercase tracking-tighter text-blue-600 bg-blue-50 border-none p-0 focus:ring-0 cursor-pointer hover:underline"
+                      >
+                        <option value="">Auto: {place.category}</option>
+                        <option value="attraction">Attraction</option>
+                        <option value="restaurant">Restaurant</option>
+                        <option value="shopping">Shopping</option>
+                        <option value="stay">Stay</option>
+                        <option value="logistics">Logistics</option>
+                        <option value="work">Work</option>
+                      </select>
+                    ) : (
+                      <span className="text-[10px] font-black uppercase tracking-tighter text-slate-400">
+                        {place.category}
+                      </span>
+                    )}
+                    {place.visits && place.visits.length > 0 ? (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {place.visits.map((visit: any, vIdx: number) => (
+                          <button
+                            key={vIdx}
+                            onClick={() => onNavigateToEvent(visit.dayIdx, visit.eventId)}
+                            className="text-[10px] font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 transition-colors whitespace-nowrap"
+                          >
+                            {visit.dayDate}
+                          </button>
+                        ))}
+                      </div>
+                    ) : place.dayDate && (
+                      <span className="text-[10px] font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full whitespace-nowrap mt-1">
                         {place.dayDate}
                       </span>
                     )}
                   </div>
                   {place.description && (
-                    <p className="text-[10px] text-slate-500 mt-2 line-clamp-2 italic bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <p className="text-[10px] text-slate-500 mt-2 italic bg-slate-50 p-2 rounded-lg border border-slate-100 break-words">
                       <span className="font-bold not-italic text-slate-400 mr-1">Note:</span>
                       {place.description}
                     </p>
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0 ml-2 mt-1">
                 {place.location && (
                   <div className="flex gap-1">
                     <a 
@@ -1089,7 +1197,8 @@ export default function App() {
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [expandedTrips, setExpandedTrips] = useState<Set<string>>(new Set());
   const [tripsList, setTripsList] = useState<{id: string, title: string, date: string, year?: string}[]>([]);
-  const [tripTitle, setTripTitle] = useState('Loading...');
+  const [tripTitle, setTripTitle] = useState('');
+  const [isLoadingTrip, setIsLoadingTrip] = useState(true);
   const [tripDates, setTripDates] = useState('');
   const [activeGroupIndices, setActiveGroupIndices] = useState<Record<string, number>>({});
   const [refinePrompt, setRefinePrompt] = useState('');
@@ -1106,9 +1215,12 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [aiProposal, setAiProposal] = useState<GeminiProposal | null>(null);
+  const [rejectedSuggestionIds, setRejectedSuggestionIds] = useState<string[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [activeColumnIdx, setActiveColumnIdx] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [weatherData, setWeatherData] = useState<Record<number, WeatherInfo>>({});
 
   const [activeFilter, setActiveFilter] = useState<string>('all');
@@ -1222,10 +1334,23 @@ export default function App() {
       const finalPrompt = aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
       
       console.log('AI Action:', mode, 'Prompt:', finalPrompt);
-      const proposal = await geminiService.proposeChanges(contextItinerary, finalPrompt, mode, pastTripsSummary, contextMembers, shortlist);
+      const proposal = await geminiService.proposeChanges(
+        contextItinerary, 
+        finalPrompt, 
+        mode, 
+        pastTripsSummary, 
+        contextMembers, 
+        shortlist,
+        stays,
+        flightInfo,
+        rentalInfo,
+        restaurants,
+        experiences
+      );
       console.log('AI Proposal received:', proposal);
       
       setAiProposal(proposal);
+      setRejectedSuggestionIds([]); // Reset rejections for new proposal
       setShowAiAssistant(true); // Ensure panel is open to show proposal
       setAiPrompt('');
     } catch (err) {
@@ -1244,30 +1369,62 @@ export default function App() {
       const lastDayDate = aiProposal.itinerary[aiProposal.itinerary.length - 1]?.date || '';
       const inferredDates = firstDayDate && lastDayDate ? `${firstDayDate} - ${lastDayDate}` : '';
 
+      // Filter out rejected suggestions from itinerary
+      const filteredItinerary = aiProposal.itinerary.map(day => ({
+        ...day,
+        events: day.events.filter(event => {
+          const suggestion = aiProposal.suggestions?.find(s => s.relatedId === event.id);
+          if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
+            return false;
+          }
+          return true;
+        })
+      }));
+
       // Filter out generic neighborhoods from shortlist just in case AI pollutes it
       const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south'];
       const filteredAiShortlist = (aiProposal.shortlist || []).filter(p => {
         const name = p.name?.toLowerCase() || '';
-        return !genericTerms.some(term => name.includes(term) && name.split(' ').length <= 2);
+        const isGeneric = genericTerms.some(term => name.includes(term) && name.split(' ').length <= 2);
+        if (isGeneric) return false;
+        
+        // Also filter if it's a rejected suggestion
+        const suggestion = aiProposal.suggestions?.find(s => s.text.includes(p.name));
+        if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
+          return false;
+        }
+        return true;
       });
 
       let finalTitle = aiProposal.title;
-      const isGenericTitle = !finalTitle || 
-                            finalTitle.toLowerCase().includes('arizona') || 
-                            finalTitle.toLowerCase().includes('arrival') || 
-                            finalTitle.toLowerCase().includes('new trip') ||
-                            finalTitle.toLowerCase().includes('itinerary');
+      const isGenericTitle = (t: string | undefined) => !t || 
+                            t.toLowerCase().includes('arizona') || 
+                            t.toLowerCase().includes('arrival') || 
+                            t.toLowerCase().includes('new trip') ||
+                            t.toLowerCase().includes('itinerary') ||
+                            t.length < 3;
 
-      if (isGenericTitle) {
+      if (isGenericTitle(finalTitle)) {
         // Try to find a better title from the first day or destination
         const firstDayTitle = aiProposal.itinerary[0]?.title;
-        const hasPlaceInTitle = (t: string) => t && !t.toLowerCase().includes('arrival') && !t.toLowerCase().includes('arizona') && !t.toLowerCase().includes('new trip');
+        const hasPlaceInTitle = (t: string | undefined) => t && !isGenericTitle(t);
         
         if (hasPlaceInTitle(firstDayTitle)) {
           finalTitle = firstDayTitle;
+        } else if (hasPlaceInTitle(tripTitle)) {
+          finalTitle = tripTitle;
         } else {
-          // Fallback to existing trip title if it's not generic, otherwise "New Trip"
-          finalTitle = hasPlaceInTitle(tripTitle) ? tripTitle : 'New Trip';
+          // Look for the most frequent location name in the itinerary
+          const locations = aiProposal.itinerary.flatMap(d => d.events.map(e => e.location?.name || e.destination?.name)).filter(Boolean);
+          if (locations.length > 0) {
+            const counts: Record<string, number> = {};
+            locations.forEach(loc => { counts[loc!] = (counts[loc!] || 0) + 1; });
+            const topLoc = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+            const year = new Date().getFullYear();
+            finalTitle = `${topLoc} ${year}`;
+          } else {
+            finalTitle = 'New Trip';
+          }
         }
       }
 
@@ -1285,10 +1442,10 @@ export default function App() {
         }));
         
         // Save first, then switch to ensure data is ready for the listener
-        await saveToFirestore(aiProposal.itinerary, finalTitle, finalDates, false, aiShortlist, newId, aiProposal.flightInfo || null, aiProposal.rentalInfo || null, aiProposal.stays || [], aiProposal.restaurants || [], aiProposal.experiences || [], aiProposal.members || []);
+        await saveToFirestore(filteredItinerary, finalTitle, finalDates, false, aiShortlist, newId, aiProposal.flightInfo || null, aiProposal.rentalInfo || null, aiProposal.stays || [], aiProposal.restaurants || [], aiProposal.experiences || [], aiProposal.members || []);
         
         setCurrentTripId(newId);
-        setItinerary(aiProposal.itinerary);
+        setItinerary(filteredItinerary);
         setTripTitle(finalTitle);
         setTripDates(finalDates);
         setShortlist(aiShortlist);
@@ -1302,7 +1459,7 @@ export default function App() {
         setView('itinerary');
       } else {
         setItineraryHistory(prev => [...prev, itinerary]);
-        setItinerary(aiProposal.itinerary);
+        setItinerary(filteredItinerary);
         
         const aiShortlist = filteredAiShortlist.map(p => ({
           ...p,
@@ -1326,12 +1483,28 @@ export default function App() {
         setExperiences(aiProposal.experiences || experiences);
         setMembers(aiProposal.members || members);
         
-        saveToFirestore(aiProposal.itinerary, finalTitle, finalDates, false, updatedShortlist, undefined, aiProposal.flightInfo || flightInfo, aiProposal.rentalInfo || rentalInfo, aiProposal.stays || stays, aiProposal.restaurants || restaurants, aiProposal.experiences || experiences, aiProposal.members || members);
+        saveToFirestore(filteredItinerary, finalTitle, finalDates, false, updatedShortlist, undefined, aiProposal.flightInfo || flightInfo, aiProposal.rentalInfo || rentalInfo, aiProposal.stays || stays, aiProposal.restaurants || restaurants, aiProposal.experiences || experiences, aiProposal.members || members);
       }
       
       setAiProposal(null);
+      setRejectedSuggestionIds([]);
       setShowAiAssistant(false);
     };
+
+  // Helper to remove undefined values for Firestore
+  const sanitizeForFirestore = (obj: any): any => {
+    if (Array.isArray(obj)) {
+      return obj.map(sanitizeForFirestore);
+    } else if (obj !== null && typeof obj === 'object') {
+      return Object.entries(obj).reduce((acc: any, [key, value]) => {
+        if (value !== undefined) {
+          acc[key] = sanitizeForFirestore(value);
+        }
+        return acc;
+      }, {});
+    }
+    return obj;
+  };
 
   const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string, isAutoSync = false, currentShortlist?: any[], tripIdOverride?: string, currentFlightInfo?: any, currentRentalInfo?: any, currentStays?: any[], currentRestaurants?: any[], currentExperiences?: any[], currentMembers?: TripMember[]) => {
     if (!auth.currentUser) return;
@@ -1346,10 +1519,8 @@ export default function App() {
     try {
       // If this is a structural update or manual save, we might want to record history
       // For now, let's just save the main document
-      const saveData: any = { 
+      const saveData: any = sanitizeForFirestore({ 
         days: data,
-        title: title !== undefined ? title : (tripIdOverride ? 'New Trip' : tripTitle),
-        dates: dates !== undefined ? dates : (tripIdOverride ? 'Dates TBD' : tripDates),
         templateVersion: TEMPLATE_VERSION,
         lastUpdated: new Date().toISOString(),
         updatedBy: auth.currentUser.email,
@@ -1361,7 +1532,23 @@ export default function App() {
         restaurants: currentRestaurants !== undefined ? currentRestaurants : restaurants,
         experiences: currentExperiences !== undefined ? currentExperiences : experiences,
         members: currentMembers !== undefined ? currentMembers : members
-      };
+      });
+
+      if (title !== undefined && title !== 'Loading...') {
+        saveData.title = title;
+      } else if (tripIdOverride) {
+        saveData.title = 'New Trip';
+      } else if (tripTitle && tripTitle !== 'Loading...') {
+        saveData.title = tripTitle;
+      }
+
+      if (dates !== undefined) {
+        saveData.dates = dates;
+      } else if (tripIdOverride) {
+        saveData.dates = 'Dates TBD';
+      } else {
+        saveData.dates = tripDates;
+      }
 
       await setDoc(tripDoc, saveData, { merge: true });
 
@@ -1398,11 +1585,17 @@ export default function App() {
         
         // Update title if it's a generic meal title
         let newTitle = event.title;
-        const genericTitles = ['Quick Lunch', 'Lunch', 'Dinner', 'Breakfast', 'Meal', 'Food Stop'];
+        const genericTitles = ['Quick Lunch', 'Lunch', 'Dinner', 'Breakfast', 'Meal', 'Food Stop', 'Meal Selection'];
+        
         if (!isSelected && (genericTitles.includes(event.title) || event.title.toLowerCase().includes('lunch') || event.title.toLowerCase().includes('dinner'))) {
+          // Store original title in a data attribute or just use a fallback
+          if (!event.originalTitle) {
+            event.originalTitle = event.title;
+          }
           newTitle = suggestion.name;
-        } else if (isSelected) {
-          // Revert to generic if unselecting? Maybe not, let's keep it simple.
+        } else if (isSelected && event.originalTitle) {
+          // Revert to original title if unselecting
+          newTitle = event.originalTitle;
         }
 
         return { ...event, title: newTitle, location: newLoc };
@@ -1414,6 +1607,10 @@ export default function App() {
     const finalEvents: TripEvent[] = [];
     const baseEvents = newEvents.filter(e => e.type !== 'travel');
     
+    // Determine travel mode
+    const travelMode = hasRentalInfo ? 'drive' : 'transit';
+    const travelTitle = hasRentalInfo ? 'Drive' : 'Transit';
+
     for (let i = 0; i < baseEvents.length; i++) {
       const current = baseEvents[i];
       finalEvents.push(current);
@@ -1427,12 +1624,13 @@ export default function App() {
           finalEvents.push({
             id: `nav-${current.id}-${next.id}`,
             type: 'travel',
-            category: 'drive',
-            title: `Drive to ${nextLoc.name}`,
+            category: travelMode,
+            title: `${travelTitle} to ${nextLoc.name}`,
             origin: currentLoc,
             destination: nextLoc,
             startTime: current.endTime || current.startTime,
-            endTime: next.startTime
+            endTime: next.startTime,
+            memberIds: current.memberIds // Keep members consistent
           });
         }
       }
@@ -1627,9 +1825,17 @@ export default function App() {
               prevLoc.name.toLowerCase() !== currLoc.name.toLowerCase();
 
             if (isDifferentPlace) {
-              const startTime = prev.endTime || prev.startTime;
+              let startTime = prev.endTime || prev.startTime;
               const endTime = current.startTime;
               
+              // If prev was from a previous day, set startTime to 12:00 AM of current day
+              // to ensure it sorts correctly at the beginning of the day
+              const prevDayIdx = itinerary.findIndex(d => d.events.some(e => e.id === prev.id));
+              const currentDayIdx = itinerary.indexOf(day);
+              if (prevDayIdx !== -1 && prevDayIdx < currentDayIdx) {
+                startTime = "12:00 AM";
+              }
+
               // Check if we already have a travel event between these two activities for this member
               const existingNav = travelEvents.find(t => {
                 const tStart = toMinutes(t.startTime);
@@ -1787,15 +1993,66 @@ export default function App() {
         }
 
         setItinerary(data.days);
-        setTripTitle(data.title || (currentTripId === 'main' ? 'Arizona 2026' : 'New Trip'));
-        setTripDates(data.dates || (currentTripId === 'main' ? 'May 14 - May 19' : 'Dates TBD'));
+        
+        // Robust title handling: never accept "Loading..." from DB
+        let finalTitle = data.title;
+        if (!finalTitle || finalTitle === 'Loading...') {
+          finalTitle = currentTripId === 'main' ? 'Arizona 2026' : 'Untitled Trip';
+        }
+
+        // Robust dates handling: ensure dates are never missing for main trip
+        let finalDates = data.dates;
+        if (!finalDates || finalDates === 'Dates TBD') {
+          finalDates = currentTripId === 'main' ? 'May 14 - May 19' : 'Dates TBD';
+        }
+
+        setTripTitle(finalTitle);
+        setTripDates(finalDates);
         setShortlist(data.shortlist || []);
-        setFlightInfo(data.flightInfo || (currentTripId === 'main' ? FLIGHT_DETAILS : null));
-        setRentalInfo(data.rentalInfo || (currentTripId === 'main' ? RENTAL_DETAILS : null));
-        setStays(data.stays || (currentTripId === 'main' ? STAY_DETAILS : []));
-        setRestaurants(data.restaurants || (currentTripId === 'main' ? RESTAURANT_DETAILS : []));
+        
+        // Robust reservation handling: check for empty objects
+        const hasFlights = data.flightInfo && Object.keys(data.flightInfo).length > 0;
+        const hasRental = data.rentalInfo && Object.keys(data.rentalInfo).length > 0;
+        const hasStays = data.stays && data.stays.length > 0;
+        const hasRestaurants = data.restaurants && data.restaurants.length > 0;
+
+        const finalFlights = hasFlights ? data.flightInfo : (currentTripId === 'main' ? FLIGHT_DETAILS : null);
+        const finalRental = hasRental ? data.rentalInfo : (currentTripId === 'main' ? RENTAL_DETAILS : null);
+        const finalStays = hasStays ? data.stays : (currentTripId === 'main' ? STAY_DETAILS : []);
+        const finalRestaurants = hasRestaurants ? data.restaurants : (currentTripId === 'main' ? RESTAURANT_DETAILS : []);
+
+        setFlightInfo(finalFlights);
+        setRentalInfo(finalRental);
+        setStays(finalStays);
+        setRestaurants(finalRestaurants);
+        
         setExperiences(data.experiences || []);
         setMembers(data.members || []);
+        setIsLoadingTrip(false);
+
+        // Debug log for verification
+        console.log(`[Firestore Sync] Trip: "${finalTitle}" | Dates: "${finalDates}" | Flights: ${hasFlights ? 'YES' : 'FALLBACK'} | Stays: ${hasStays ? 'YES' : 'FALLBACK'}`);
+
+        // If we had to use fallbacks for the main trip, push them to Firestore once to "fix" the backend.
+        if (currentTripId === 'main' && isAdmin && (
+          data.title === 'Loading...' || !data.title || 
+          !data.dates || data.dates === 'Dates TBD' ||
+          !hasFlights || !hasRental || !hasStays
+        )) {
+          console.warn("Main trip data incomplete in Firestore. Pushing correct data now...");
+          saveToFirestore(
+            data.days, 
+            finalTitle, 
+            finalDates, 
+            true, 
+            data.shortlist, 
+            undefined,
+            finalFlights,
+            finalRental,
+            finalStays,
+            finalRestaurants
+          );
+        }
       } else if (currentTripId === 'main') {
         // Only initialize if we have a user and they are an admin
         if (auth.currentUser && isAdmin) {
@@ -1805,9 +2062,18 @@ export default function App() {
             dates: 'May 14 - May 19',
             templateVersion: TEMPLATE_VERSION,
             lastUpdated: new Date().toISOString(),
-            updatedBy: auth.currentUser.email
+            updatedBy: auth.currentUser.email,
+            stays: STAY_DETAILS,
+            flightInfo: FLIGHT_DETAILS,
+            rentalInfo: RENTAL_DETAILS
           }).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
         }
+      } else {
+        // Trip doesn't exist and it's not 'main'
+        setTripTitle('New Trip');
+        setTripDates('Dates TBD');
+        setItinerary([]);
+        setIsLoadingTrip(false);
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, path);
@@ -2093,12 +2359,14 @@ export default function App() {
     };
 
     const duration = getDurationMinutes(event.startTime, event.endTime);
-    const heightScale = 1.5; // 1.5px per minute
-    const minHeight = 100;
-    const calculatedHeight = Math.max(minHeight, duration * heightScale);
+    const heightScale = isGrouped ? 0.6 : 1.2; // Reduced scale for grouped events to prevent excessive height
+    const minHeight = isGrouped ? 80 : 100;
+    const maxHeight = isGrouped ? 300 : 600; // Cap the height
+    const calculatedHeight = Math.min(maxHeight, Math.max(minHeight, duration * heightScale));
 
     return (
       <div 
+        id={event.id}
         onClick={() => expandable && toggleEventExpansion(event.id)}
         className={cn(
           "rounded-2xl transition-all relative w-full border p-4 pl-12",
@@ -2110,8 +2378,7 @@ export default function App() {
           expandable && "cursor-pointer active:scale-[0.99]"
         )}
         style={{ 
-          minHeight: isGrouped ? `${calculatedHeight}px` : 'auto',
-          height: isGrouped ? `${calculatedHeight}px` : 'auto'
+          minHeight: isGrouped ? `${calculatedHeight}px` : 'auto'
         }}
       >
         {/* Category Icon - On the edge */}
@@ -2164,12 +2431,12 @@ export default function App() {
         )}
 
         {/* Content Area */}
-        <div className={cn("flex flex-col gap-0", event.memberIds && event.memberIds.length > 0 ? "pr-20" : "pr-4")}>
+        <div className={cn("flex flex-col gap-0 min-w-0", event.memberIds && event.memberIds.length > 0 ? "pr-20" : "pr-4")}>
           {/* Header: Title & Time */}
           <div className="flex items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
               <h4 className={cn(
-                "text-sm font-bold text-slate-800 leading-tight break-words",
+                "text-sm font-bold text-slate-800 leading-tight break-words overflow-hidden",
                 event.hidden && "line-through"
               )}>
                 {event.title}
@@ -2437,27 +2704,97 @@ export default function App() {
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {aiProposal ? (
-                <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100">
-                  <h3 className="font-bold text-blue-900 mb-2 flex items-center gap-2">
-                    <Wand2 className="w-4 h-4" />
-                    Proposed Changes
-                  </h3>
-                  <p className="text-sm text-blue-800 mb-4 italic">"{aiProposal.explanation || "I've updated your itinerary based on your request. Review the changes below."}"</p>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={applyAiProposal}
-                      className="flex-1 bg-blue-600 text-white py-2 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
-                      title="Apply these changes to your itinerary"
-                    >
-                      <Check className="w-4 h-4" /> Apply
-                    </button>
-                    <button 
-                      onClick={() => setAiProposal(null)}
-                      className="flex-1 bg-white text-slate-600 py-2 rounded-xl font-bold border border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors"
-                      title="Discard these changes"
-                    >
-                      <X className="w-4 h-4" /> Discard
-                    </button>
+                <div className="space-y-4">
+                  <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100">
+                    <h3 className="font-bold text-blue-900 mb-2 flex items-center gap-2">
+                      <Wand2 className="w-4 h-4" />
+                      Proposed Changes
+                    </h3>
+                    <p className="text-sm text-blue-800 mb-4 italic">"{aiProposal.explanation || "I've updated your itinerary based on your request. Review the changes below."}"</p>
+                    
+                    {aiProposal.assumptions && aiProposal.assumptions.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Assumptions</h4>
+                        <ul className="space-y-1">
+                          {aiProposal.assumptions.map((a, i) => (
+                            <li key={i} className="text-xs text-blue-700 flex items-start gap-2">
+                              <span className="mt-1 w-1 h-1 bg-blue-400 rounded-full shrink-0" />
+                              {a}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {aiProposal.suggestions && aiProposal.suggestions.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Suggestions</h4>
+                        <div className="space-y-2">
+                          {aiProposal.suggestions.map((s) => (
+                            <div 
+                              key={s.id} 
+                              className={cn(
+                                "p-3 rounded-xl border transition-all flex items-center justify-between gap-3",
+                                rejectedSuggestionIds.includes(s.id) 
+                                  ? "bg-slate-50 border-slate-100 opacity-60" 
+                                  : "bg-white border-blue-100 shadow-sm"
+                              )}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className={cn(
+                                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                                  s.type === 'activity' ? "bg-green-50 text-green-600" :
+                                  s.type === 'food' ? "bg-orange-50 text-orange-600" :
+                                  "bg-blue-50 text-blue-600"
+                                )}>
+                                  {s.type === 'activity' ? <MapPin className="w-4 h-4" /> :
+                                   s.type === 'food' ? <Utensils className="w-4 h-4" /> :
+                                   <Sparkles className="w-4 h-4" />}
+                                </div>
+                                <p className="text-xs font-medium text-slate-700 leading-tight">{s.text}</p>
+                              </div>
+                              <button 
+                                onClick={() => {
+                                  if (rejectedSuggestionIds.includes(s.id)) {
+                                    setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
+                                  } else {
+                                    setRejectedSuggestionIds(prev => [...prev, s.id]);
+                                  }
+                                }}
+                                className={cn(
+                                  "w-6 h-6 rounded-full flex items-center justify-center transition-colors",
+                                  rejectedSuggestionIds.includes(s.id)
+                                    ? "bg-slate-200 text-slate-500"
+                                    : "bg-blue-600 text-white"
+                                )}
+                              >
+                                {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-3 h-3" /> : <Check className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={applyAiProposal}
+                        className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
+                        title="Apply these changes to your itinerary"
+                      >
+                        <Check className="w-4 h-4" /> Apply Changes
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setAiProposal(null);
+                          setRejectedSuggestionIds([]);
+                        }}
+                        className="flex-1 bg-white text-slate-600 py-2.5 rounded-xl font-bold border border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors"
+                        title="Discard these changes"
+                      >
+                        <X className="w-4 h-4" /> Discard
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -2539,7 +2876,7 @@ export default function App() {
                     }}
                     className="bg-transparent border-none p-0 focus:ring-0 w-full"
                   />
-                ) : tripTitle
+                ) : (isLoadingTrip ? 'Loading...' : (tripTitle || 'Untitled Trip'))
               )}
             </h1>
           </div>
@@ -3009,9 +3346,8 @@ export default function App() {
                 <div className="space-y-4">
                   {(() => {
                     const eventsWithIdx = (activeDay.events || []).map((e, idx) => ({ ...e, originalIdx: idx }));
-                    
-                    // Group events by startTime for overlapping tiles
-                    const groupedEvents: (TripEvent & { originalIdx: number })[][] = [];
+                                      // Group events by startTime for overlapping tiles
+                    const rawGroups: (TripEvent & { originalIdx: number })[][] = [];
                     let i = 0;
                     while (i < eventsWithIdx.length) {
                       const current = eventsWithIdx[i];
@@ -3060,9 +3396,31 @@ export default function App() {
                         group.push(eventsWithIdx[j]);
                         j++;
                       }
-                      groupedEvents.push(group);
+                      rawGroups.push(group);
                       i = j;
                     }
+
+                    // Deduplicate identical events across members within each group
+                    const groupedEvents = rawGroups.map(group => {
+                      const deduped: (TripEvent & { originalIdx: number })[] = [];
+                      group.forEach(event => {
+                        const existing = deduped.find(d => 
+                          d.title === event.title && 
+                          d.startTime === event.startTime && 
+                          d.endTime === event.endTime &&
+                          d.location?.name === event.location?.name &&
+                          d.type === event.type
+                        );
+                        if (existing) {
+                          // Merge members
+                          const allMembers = Array.from(new Set([...(existing.memberIds || []), ...(event.memberIds || [])]));
+                          existing.memberIds = allMembers;
+                        } else {
+                          deduped.push({ ...event });
+                        }
+                      });
+                      return deduped;
+                    });
 
                     return (
                       <div className="space-y-3">
@@ -3087,74 +3445,225 @@ export default function App() {
                              return (
                               <div key={groupIdx} className="relative">
                                 {group.length > 1 ? (
-                                  <div className="flex gap-2 items-stretch overflow-x-auto scrollbar-hide snap-x snap-mandatory -mx-6 px-6 pb-6">
-                                    {(() => {
-                                      // Get all unique members involved in this group
-                                      const involvedMemberIds = new Set<string>();
-                                      group.forEach(event => {
-                                        if (event.memberIds && event.memberIds.length > 0) {
-                                          event.memberIds.forEach(id => {
-                                            if (id !== 'everyone') involvedMemberIds.add(id);
-                                          });
-                                        }
-                                      });
+                                  <div className="relative">
+                                    <div 
+                                      ref={scrollRef}
+                                      onScroll={(e) => {
+                                        const scrollLeft = e.currentTarget.scrollLeft;
+                                        const width = e.currentTarget.offsetWidth;
+                                        const idx = Math.round(scrollLeft / width);
+                                        setActiveColumnIdx(idx);
+                                      }}
+                                      className="flex gap-4 items-stretch overflow-x-auto scrollbar-hide snap-x snap-mandatory -mx-6 px-6 pb-6"
+                                    >
+                                      {(() => {
+                                        // Get all unique members involved in this group
+                                        const involvedMemberIds = new Set<string>();
+                                        group.forEach(event => {
+                                          if (event.memberIds && event.memberIds.length > 0) {
+                                            event.memberIds.forEach(id => {
+                                              if (id !== 'everyone') involvedMemberIds.add(id);
+                                            });
+                                          }
+                                        });
 
-                                      // If no specific members, or only 'everyone', just show one column
-                                      if (involvedMemberIds.size === 0) {
-                                        return (
-                                          <div className="flex-1 min-w-[280px] snap-center flex flex-col gap-2">
-                                            {group.map((event) => (
-                                              <div key={event.id} className="flex-1 flex flex-col">
-                                                <EventTile 
-                                                  event={event} 
-                                                  dayIdx={activeDayIdx}
-                                                  eventIdx={event.originalIdx!}
-                                                  isGrouped={true}
-                                                />
-                                              </div>
-                                            ))}
-                                          </div>
-                                        );
-                                      }
+                                        // Check if all events in the group are shared by all involved members
+                                        const allEventsShared = group.every(event => {
+                                          const eventMembers = event.memberIds || [];
+                                          if (eventMembers.length === 0 || eventMembers.includes('everyone')) return true;
+                                          return Array.from(involvedMemberIds).every(id => eventMembers.includes(id));
+                                        });
 
-                                      // Create a column for each involved member
-                                      const sortedMemberIds = Array.from(involvedMemberIds).sort((a, b) => {
-                                        const aIdx = masterTravellers.findIndex(m => m.id === a);
-                                        const bIdx = masterTravellers.findIndex(m => m.id === b);
-                                        return aIdx - bIdx;
-                                      });
-
-                                      return sortedMemberIds.map(mid => {
-                                        const memberEvents = group.filter(e => 
-                                          !e.memberIds || 
-                                          e.memberIds.length === 0 || 
-                                          e.memberIds.includes('everyone') || 
-                                          e.memberIds.includes(mid)
-                                        );
-                                        
-                                        if (memberEvents.length === 0) return null;
-
-                                        return (
-                                          <div key={mid} className="flex-1 min-w-[280px] snap-center flex flex-col gap-2">
-                                            <div className="px-3 py-1 bg-slate-50 rounded-lg border border-slate-100 mb-1">
-                                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                                {masterTravellers.find(m => m.id === mid)?.name || mid}
-                                              </p>
+                                        // If no specific members, or only 'everyone', or all events are shared, just show one column
+                                        if (involvedMemberIds.size <= 1 || allEventsShared) {
+                                          return (
+                                            <div className="flex-1 min-w-[280px] snap-center flex flex-col gap-2">
+                                              {group.map((event) => (
+                                                <div key={`${event.id}-shared`} className="flex-1 flex flex-col">
+                                                  <EventTile 
+                                                    event={event} 
+                                                    dayIdx={activeDayIdx}
+                                                    eventIdx={event.originalIdx!}
+                                                    isGrouped={true}
+                                                  />
+                                                </div>
+                                              ))}
                                             </div>
-                                            {memberEvents.map((event) => (
-                                              <div key={event.id} className="flex-1 flex flex-col">
-                                                <EventTile 
-                                                  event={event} 
-                                                  dayIdx={activeDayIdx}
-                                                  eventIdx={event.originalIdx!}
-                                                  isGrouped={true}
-                                                />
+                                          );
+                                        }
+
+                                        // Create a column for each involved member
+                                        const sortedMemberIds = Array.from(involvedMemberIds).sort((a, b) => {
+                                          const aIdx = masterTravellers.findIndex(m => m.id === a);
+                                          const bIdx = masterTravellers.findIndex(m => m.id === b);
+                                          return aIdx - bIdx;
+                                        });
+
+                                        // Group members by their event lists
+                                        const memberGroups: { memberIds: string[], events: TripEvent[] }[] = [];
+                                        
+                                        sortedMemberIds.forEach(mid => {
+                                          const memberEvents = group.filter(e => 
+                                            !e.memberIds || 
+                                            e.memberIds.length === 0 || 
+                                            e.memberIds.includes('everyone') || 
+                                            e.memberIds.includes(mid)
+                                          );
+                                          
+                                          if (memberEvents.length === 0) return;
+
+                                          // Find if another member has the exact same events
+                                          const existingGroup = memberGroups.find(mg => {
+                                            if (mg.events.length !== memberEvents.length) return false;
+                                            return mg.events.every((e, i) => e.id === memberEvents[i].id);
+                                          });
+
+                                          if (existingGroup) {
+                                            existingGroup.memberIds.push(mid);
+                                          } else {
+                                            memberGroups.push({ memberIds: [mid], events: memberEvents });
+                                          }
+                                        });
+
+                                        return memberGroups.map((mg, colIdx) => {
+                                          const groupKey = mg.memberIds.join('-');
+                                          const isActive = activeColumnIdx === colIdx;
+                                          
+                                          return (
+                                            <motion.div 
+                                              key={groupKey} 
+                                              animate={{ 
+                                                scale: isActive ? 1 : 0.9,
+                                                opacity: isActive ? 1 : 0.5,
+                                                x: isActive ? 0 : (colIdx < activeColumnIdx ? 10 : -10)
+                                              }}
+                                              className={cn(
+                                                "flex-1 min-w-[85%] snap-center flex flex-col gap-2 transition-all duration-300",
+                                                !isActive && "cursor-pointer"
+                                              )}
+                                              onClick={() => {
+                                                if (!isActive && scrollRef.current) {
+                                                  scrollRef.current.scrollTo({
+                                                    left: colIdx * scrollRef.current.offsetWidth,
+                                                    behavior: 'smooth'
+                                                  });
+                                                }
+                                              }}
+                                            >
+                                              <div className={cn(
+                                                "px-3 py-1.5 rounded-2xl border transition-all duration-300 flex items-center justify-between gap-2",
+                                                isActive ? "bg-white border-slate-100 shadow-sm" : "bg-slate-50 border-transparent"
+                                              )}>
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                  <div className="flex -space-x-1.5">
+                                                    {mg.memberIds.map(mid => {
+                                                      const member = masterTravellers.find(m => m.id === mid);
+                                                      return (
+                                                        <div 
+                                                          key={mid}
+                                                          className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold text-white shadow-sm"
+                                                          style={{ backgroundColor: member?.color || '#cbd5e1' }}
+                                                        >
+                                                          {member?.initials}
+                                                        </div>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                  {isActive && (
+                                                    <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest truncate">
+                                                      {mg.memberIds.map(mid => masterTravellers.find(m => m.id === mid)?.name || mid).join(' & ')}
+                                                    </p>
+                                                  )}
+                                                </div>
+                                                
+                                                <div className="flex gap-1">
+                                                  {Array.from(new Set(mg.events.map(e => e.category))).slice(0, 3).map(cat => (
+                                                    <div key={cat} className={cn(isActive ? "text-slate-400" : "text-slate-300")}>
+                                                      {cat === 'food' ? <Utensils className="w-3 h-3" /> :
+                                                       cat === 'stay' ? <Home className="w-3 h-3" /> :
+                                                       cat === 'logistics' ? <Plane className="w-3 h-3" /> :
+                                                       <MapPin className="w-3 h-3" />}
+                                                    </div>
+                                                  ))}
+                                                </div>
                                               </div>
-                                            ))}
-                                          </div>
-                                        );
-                                      });
-                                    })()}
+                                              
+                                              <div className={cn(
+                                                "flex-1 flex flex-col gap-2 transition-all duration-500",
+                                                isActive ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none overflow-hidden h-0"
+                                              )}>
+                                                {mg.events.map((event) => (
+                                                  <div key={`${event.id}-${groupKey}`} className="flex-1 flex flex-col">
+                                                    <EventTile 
+                                                      event={event} 
+                                                      dayIdx={activeDayIdx}
+                                                      eventIdx={event.originalIdx!}
+                                                      isGrouped={true}
+                                                    />
+                                                  </div>
+                                                ))}
+                                              </div>
+                                              
+                                              {!isActive && (
+                                                <div className="flex-1 flex flex-col items-center justify-center py-8 border-2 border-dashed border-slate-100 rounded-3xl bg-slate-50/50">
+                                                  <div className="flex flex-col items-center gap-2 opacity-40">
+                                                    <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
+                                                      <ChevronRight className={cn("w-4 h-4 text-slate-400", colIdx < activeColumnIdx && "rotate-180")} />
+                                                    </div>
+                                                    <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">View Itinerary</span>
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </motion.div>
+                                          );
+                                        });
+                                      })()}
+                                    </div>
+                                    
+                                    {/* Column Indicators */}
+                                    <div className="flex justify-center gap-1.5 mt-2">
+                                      {(() => {
+                                        // Need to recalculate memberGroups for indicators
+                                        const involvedMemberIds = new Set<string>();
+                                        group.forEach(event => {
+                                          if (event.memberIds && event.memberIds.length > 0) {
+                                            event.memberIds.forEach(id => {
+                                              if (id !== 'everyone') involvedMemberIds.add(id);
+                                            });
+                                          }
+                                        });
+                                        const sortedMemberIds = Array.from(involvedMemberIds).sort((a, b) => {
+                                          const aIdx = masterTravellers.findIndex(m => m.id === a);
+                                          const bIdx = masterTravellers.findIndex(m => m.id === b);
+                                          return aIdx - bIdx;
+                                        });
+                                        const memberGroups: string[] = [];
+                                        const processedMids = new Set<string>();
+                                        sortedMemberIds.forEach(mid => {
+                                          if (processedMids.has(mid)) return;
+                                          const memberEvents = group.filter(e => !e.memberIds || e.memberIds.length === 0 || e.memberIds.includes('everyone') || e.memberIds.includes(mid));
+                                          const sameEventsMids = sortedMemberIds.filter(otherMid => {
+                                            const otherEvents = group.filter(e => !e.memberIds || e.memberIds.length === 0 || e.memberIds.includes('everyone') || e.memberIds.includes(otherMid));
+                                            if (otherEvents.length !== memberEvents.length) return false;
+                                            return otherEvents.every((e, i) => e.id === memberEvents[i].id);
+                                          });
+                                          memberGroups.push(sameEventsMids.join('-'));
+                                          sameEventsMids.forEach(id => processedMids.add(id));
+                                        });
+
+                                        if (memberGroups.length <= 1) return null;
+
+                                        return memberGroups.map((_, idx) => (
+                                          <div 
+                                            key={idx} 
+                                            className={cn(
+                                              "w-1.5 h-1.5 rounded-full transition-all duration-300",
+                                              activeColumnIdx === idx ? "bg-blue-600 w-4" : "bg-slate-200"
+                                            )} 
+                                          />
+                                        ));
+                                      })()}
+                                    </div>
                                   </div>
                                 ) : (
                                   <EventTile 
@@ -3200,13 +3709,31 @@ export default function App() {
         )}
 
           {activeTab === 'places' && (
-            <motion.div key="places" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
+            <motion.div key="places" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full">
               <PlacesView 
                 itinerary={itinerary}
                 shortlist={shortlist}
                 onAddShortlist={handleAddShortlist}
                 onRemoveShortlist={handleRemoveShortlist}
                 isAdmin={isAdmin}
+                onUpdateItinerary={setItinerary}
+                onSaveToFirestore={saveToFirestore}
+                onNavigateToEvent={(dayIdx, eventId) => {
+                  setActiveDayIdx(dayIdx);
+                  setActiveTab('itinerary');
+                  // Give it a moment to switch tabs and render
+                  setTimeout(() => {
+                    const el = document.getElementById(eventId);
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      // Add a brief highlight effect
+                      el.classList.add('ring-4', 'ring-blue-400', 'ring-offset-2');
+                      setTimeout(() => {
+                        el.classList.remove('ring-4', 'ring-blue-400', 'ring-offset-2');
+                      }, 2000);
+                    }
+                  }, 300); // Slightly longer timeout to ensure tab transition completes
+                }}
               />
             </motion.div>
           )}

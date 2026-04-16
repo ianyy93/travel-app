@@ -4,9 +4,18 @@ import { jsonrepair } from "jsonrepair";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
+export interface GeminiSuggestion {
+  id: string;
+  text: string;
+  type: 'activity' | 'flight' | 'stay' | 'other';
+  relatedId?: string; // ID of the event in the proposed itinerary if it's an addition
+}
+
 export interface GeminiProposal {
   itinerary: DayPlan[];
   explanation: string;
+  assumptions: string[];
+  suggestions: GeminiSuggestion[];
   title?: string;
   dates?: string;
   shortlist?: any[];
@@ -26,7 +35,12 @@ export const geminiService = {
     mode: GenerationMode = 'full',
     pastTripsSummary?: string,
     currentMembers: TripMember[] = [],
-    currentShortlist: any[] = []
+    currentShortlist: any[] = [],
+    currentStays: any[] = [],
+    currentFlightInfo: any = null,
+    currentRentalInfo: any = null,
+    currentRestaurants: any[] = [],
+    currentExperiences: any[] = []
   ): Promise<GeminiProposal> {
     if (!process.env.GEMINI_API_KEY) {
       throw new Error("GEMINI_API_KEY is not configured. Please add it in the Settings menu.");
@@ -54,7 +68,14 @@ export const geminiService = {
     const systemInstruction = `
       You are an expert travel assistant. Build or modify a travel itinerary based on user requirements.
       
-      ${isNewTripRequest ? 'NEW TRIP: Ignore existing context.' : `Current Itinerary: ${JSON.stringify(contextItinerary)}`}
+      ${isNewTripRequest ? 'NEW TRIP: Ignore existing context.' : `
+      Current Itinerary: ${JSON.stringify(contextItinerary)}
+      Current Stays: ${JSON.stringify(currentStays)}
+      Current Flights: ${JSON.stringify(currentFlightInfo)}
+      Current Rental: ${JSON.stringify(currentRentalInfo)}
+      Current Dining: ${JSON.stringify(currentRestaurants)}
+      Current Experiences: ${JSON.stringify(currentExperiences)}
+      `}
       Current Members: ${JSON.stringify(currentMembers)}
       Shortlist: ${JSON.stringify(currentShortlist)}
       ${pastTripsSummary ? `Past Trips: ${pastTripsSummary}` : ''}
@@ -65,17 +86,22 @@ export const geminiService = {
       1. Return JSON matching the schema.
       2. Every 'activity' MUST have 'location' with 'name', 'lat', 'lng'.
       3. MANDATORY EXPLANATION: Describe exactly what you changed/added in the 'explanation' field.
-      4. Categories: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
+      4. ASSUMPTIONS & SUGGESTIONS: You MUST populate the 'assumptions' and 'suggestions' arrays.
+         - 'assumptions': List any logical guesses you made (e.g. "Assumed you want to stay in Midtown").
+         - 'suggestions': List specific additions or changes you are proposing (e.g. "Suggested a visit to the Museum of the Dog"). 
+         - For every new activity you add to the itinerary that wasn't explicitly in the prompt, you MUST create a corresponding 'suggestion' with a 'relatedId' matching the event's 'id'.
+      5. Categories: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
       5. Date format: "Month Day" (e.g., "May 14").
-      6. NAVIGATION: ${mode === 'navigation' || mode === 'full' || mode === 'autofill' ? "Add 'travel' events between EVERY pair of back-to-back activities at different locations, including transitions between days (e.g. Hotel to Museum). This is MANDATORY. Factor in realistic travel time (30-60m for cities)." : "No travel events."}
-      7. MEALS: Include 3 meals/day. For generic meals (e.g. "Lunch in Soho"), provide 3-4 specific options in 'suggestions' with coordinates. Prioritize Shortlist items for suggestions.
-      8. NO HALLUCINATIONS: Do not invent bookings or random places. Use exact names (e.g. "Javits Center" NOT "Javier's Centre").
-      9. TIMES: Every event MUST have 'startTime' and 'endTime' (AM/PM).
-      10. SHORTLIST: Add places mentioned without a specific time to 'shortlist' ONLY.
-      11. SPLIT ITINERARIES: Ensure no time overlaps for any member. Split long activities (e.g. "Work") if a specific event occurs during that window.
-      12. TITLE & DATES: For new trips, use "[Place] [Year]" format (e.g. "NYC 2026") and cover the FULL range. NEVER use "New Trip" or generic titles.
-      13. COMPLETENESS: Generate DayPlans for EVERY day in the range.
-      14. RESERVATIONS: Extract ALL flights, stays, rentals, and bookings mentioned in the prompt into the root-level reservation fields.
+      6. NAVIGATION: ${mode === 'navigation' || mode === 'full' || mode === 'autofill' ? "Add 'travel' events ONLY between confirmed locations (where 'location' is set). Do NOT add travel to/from suggestion tiles. Factor in realistic travel time (min 20-40m for cities)." : "No travel events."}
+      7. MEALS & GENERIC LOCATIONS: Include 3 meals/day. For generic meals, provide 3-4 specific options in 'suggestions'. CRITICAL: Do NOT use generic area names as the primary 'location' for a meal event. Leave 'location' empty for these. Do NOT add meal suggestions for members attending full-day events (e.g. conferences) unless requested.
+      8. STRICT PROMPT ADHERENCE: Do NOT add any activities, sights, or locations that were not explicitly mentioned in the user prompt or provided links. If the user provides a link to a 'French Bistro' but the name is not in the text, do NOT guess the name. Instead, use 'French Bistro (from link)' as the title. NEVER add 'High Line', 'Dog Runs', or other 'helpful' suggestions unless they are in the prompt.
+      9. TIMES: Every event MUST have 'startTime' and 'endTime' (AM/PM). Use realistic times (e.g. check-out by 11 AM/12 PM).
+     10. SHORTLIST & SCHEDULING: Add places mentioned without a specific time to 'shortlist' ONLY. Do NOT 'propose' a time for them in the itinerary.
+     11. SPLIT ITINERARIES: Ensure NO time overlaps for any member. If multiple people are on the trip, they can have separate activities at the same time.
+     12. TITLE & DATES: For new trips, use "[Place] [Year]" format.
+     13. NO FILLING GAPS & STAY TIMING: Unless mode is 'autofill', do NOT add any activities to fill empty time. If a day has no requested activities, it should only contain the 'stay' event and necessary travel. The 'stay' event should start AFTER all other activities and meals are finished (typically 9:00 PM or later).
+     14. RESERVATIONS: Extract ALL flights, stays, rentals, and bookings into the root-level reservation fields.
+     15. TRAVEL MODE: Default to 'transit' or 'walk' unless 'rentalInfo' (rental car) is explicitly provided. Do NOT use 'drive' if the user is flying and has no rental car.
     `;
 
     try {
@@ -174,6 +200,23 @@ export const geminiService = {
                 }
               },
               explanation: { type: Type.STRING },
+              assumptions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+              },
+              suggestions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    id: { type: Type.STRING },
+                    text: { type: Type.STRING },
+                    type: { type: Type.STRING },
+                    relatedId: { type: Type.STRING }
+                  },
+                  required: ["id", "text", "type"]
+                }
+              },
               title: { type: Type.STRING },
               dates: { type: Type.STRING },
               shortlist: {

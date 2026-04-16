@@ -19,6 +19,7 @@ export interface TripEvent {
   id: string;
   type: TripEventType;
   category: TripCategory;
+  manualCategory?: string; // Manual override for Places tab categorization
   startTime?: string;
   endTime?: string;
   title: string;
@@ -31,6 +32,7 @@ export interface TripEvent {
   hidden?: boolean; // For cancelling/hiding events
   memberIds?: string[]; // IDs of members participating in this event
   originalIdx?: number; // Internal index for editing
+  originalTitle?: string; // Original title before suggestion selection
 }
 
 export interface DayPlan {
