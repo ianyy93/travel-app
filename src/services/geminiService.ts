@@ -99,29 +99,42 @@ export const geminiService = {
       1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
       3. CORE vs OPTIONAL (CRITICAL):
-         - 'Core Itinerary': Mandatory events like requested flights, Ian's conference, and baseline meal placeholders (Breakfast, Lunch, Dinner). These do NOT need a top-level suggestion.
-         - 'Optional Suggestions': ANY added activity, logistical move (e.g. "Move to Four Seasons"), or specific restaurant choice.
-         - MANDATORY LINKING & CONSISTENCY: Every 'Optional' event added to the 'itinerary' MUST have a corresponding object in the 'suggestions' array. CONVERSELY, every activity mentioned in your 'explanation' or 'suggestions' MUST have a corresponding event entry in the 'itinerary' JSON.
+         - 'Core Itinerary': Mandatory requested events from prompt (e.g. flights, specific meetings, requested work) and baseline meal placeholders (Breakfast, Lunch, Dinner).
+         - 'Optional Suggestions': ANY AI-suggested activity, specific restaurant choice, or logistical move (e.g. hotel change).
+         - MANDATORY LINKING: Any 'Optional' event MUST be referenced in the 'suggestions' array. Travel events related to an optional activity MUST also be linked to that activity's suggestion ID or have their own.
+         - CONSISTENCY: Every location or activity mentioned in your 'explanation' MUST be in the 'itinerary'.
       4. MEALS:
-         - Core: Include "Breakfast", "Lunch", and "Dinner" for every day. Leave 'location' field empty for these core placeholders.
-         - Suggestions: Provide 3 specific restaurant names in the 'event.suggestions' array inside the event.
-      5. TRAVEL & ROUTES: Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (for Subway/Bus), or 'drive' (Taxi/Uber). Factor in 30-60 mins for NYC travel.
-      6. STAYS: Every day MUST end with a 'stay' category event.
+         - Core: Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
+         - Suggestions: Provide 3 specific restaurant names in 'event.suggestions' inside the CORE meal events. If different members dine separately, create separate meal events.
+      5. TRAVEL & ROUTES: Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (Subway/Bus), or 'drive' (Taxi/Uber). Add travel for BOTH core and suggested activities. Create separate travel events for split members if they go to different places. Realistically link travel to the activities they precede.
+      6. STAYS: Every day MUST end with a 'stay' category event, unless it is the final day and the user is traveling home.
       7. NO SKIPPING DAYS: Include every day between start and end dates.
       8. ASSUMPTIONS: List logical assumptions in the 'assumptions' array.
       9. MEMBER ASSIGNMENT: Assign 'memberIds' strictly as requested.
-     10. TITLE FORMAT (STRICT): Use exactly "[Place(s)] [Year]" (e.g., "NYC 2026"). Do NOT add extra words.
+     10. TITLE FORMAT (STRICT): Use exactly "[Place(s)] [Year]" (e.g., "NYC 2026").
+     11. TRIP END: Stop all activities/meals once the return flight or travel home begins. Do not suggest dinner after a flight that arrives home late.
     `;
 
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: userPrompt,
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          maxOutputTokens: 8192,
-          responseSchema: {
+    const models = [
+      "gemini-3-flash-preview",
+      "gemini-3.1-flash-lite-preview",
+      "gemini-2.5-flash-preview",
+      "gemini-2.5-flash-lite-preview"
+    ];
+
+    let lastError = null;
+
+    for (const modelName of models) {
+      try {
+        console.log(`Attempting generation with model: ${modelName}`);
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: userPrompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            maxOutputTokens: 8000,
+            responseSchema: {
             type: Type.OBJECT,
             properties: {
               itinerary: {
@@ -341,30 +354,26 @@ export const geminiService = {
       });
 
       const text = response.text;
-      if (!text) {
-        throw new Error("AI returned an empty response.");
-      }
-
-      try {
-        const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
-        return JSON.parse(jsonrepair(cleaned));
-      } catch (parseError) {
-        console.warn("Initial JSON parse failed, attempting repair with jsonrepair...", parseError);
-        try {
-          const repaired = jsonrepair(text);
-          return JSON.parse(repaired);
-        } catch (repairError) {
-          console.error("jsonrepair failed:", repairError);
-          throw new Error("The AI response was invalid or truncated. Please try a shorter request or ask for fewer days.");
+        if (!text) {
+          throw new Error("AI returned an empty response.");
         }
+
+        try {
+          const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
+          return JSON.parse(jsonrepair(cleaned)) as GeminiProposal;
+        } catch (parseError) {
+          console.warn(`Initial JSON parse failed for ${modelName}, attempting repair...`, parseError);
+          const repaired = jsonrepair(text);
+          return JSON.parse(repaired) as GeminiProposal;
+        }
+      } catch (error: any) {
+        console.warn(`Model ${modelName} failed:`, error.message);
+        lastError = error;
+        // The loop continues to the next model automatically
       }
-    } catch (e: any) {
-      console.error("Gemini API Error:", e);
-      if (e.message?.includes('Rpc failed') || e.message?.includes('xhr error')) {
-        throw new Error("The AI service is temporarily busy or the request was too large. Please try a shorter prompt or try again in a moment.");
-      }
-      throw e;
     }
+
+    throw lastError || new Error("All AI models failed or were unavailable. Please try again in a moment.");
   },
   async refineSuggestions(
     event: any,

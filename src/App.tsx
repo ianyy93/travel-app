@@ -2303,6 +2303,46 @@ export default function App() {
     return d;
   };
 
+  // Helper to format date for the day buttons (MMM DD)
+  const formatDateButton = (dateStr: string) => {
+    try {
+      // Handle "Tue Jul 28, 2026" or "Jul 28" or "July 28, 2026"
+      const clean = dateStr.includes(',') ? dateStr.split(',')[0].trim() : dateStr.trim();
+      
+      // If it looks like "Tue Jul 28", we want "Jul 28"
+      const parts = clean.split(' ');
+      if (parts.length >= 3) {
+        // Assume format "Day Month Date" or "Month Date Year"
+        // Try to find the month and date
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const fullMonthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        
+        let month = '';
+        let day = '';
+        
+        for (const p of parts) {
+          const mIdx = monthNames.findIndex(m => p.startsWith(m));
+          const fmIdx = fullMonthNames.findIndex(m => p.startsWith(m));
+          if (mIdx !== -1 || fmIdx !== -1) {
+            month = monthNames[mIdx !== -1 ? mIdx : fmIdx];
+          } else if (!isNaN(parseInt(p))) {
+            day = p;
+          }
+        }
+        
+        if (month && day) return `${month} ${day}`;
+      }
+      
+      const d = new Date(dateStr);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
+      return dateStr;
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
   const isCurrentEvent = (event: TripEvent) => {
     if (!event.startTime || !activeDay) return false;
     
@@ -2713,13 +2753,20 @@ export default function App() {
                     <p className="text-sm text-blue-800 mb-4 italic">"{aiProposal.explanation || "I've updated your itinerary based on your request. Review the changes below."}"</p>
                     
                     {aiProposal.assumptions && aiProposal.assumptions.length > 0 && (
-                      <div className="mb-4">
+                      <div className="mb-4 text-left">
                         <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Assumptions</h4>
                         <ul className="space-y-1">
                           {aiProposal.assumptions.map((a, i) => (
-                            <li key={i} className="text-xs text-blue-700 flex items-start gap-2">
-                              <span className="mt-1 w-1 h-1 bg-blue-400 rounded-full shrink-0" />
-                              {a}
+                            <li key={i} className="group text-xs text-blue-700 flex items-start gap-2">
+                              <span className="mt-1.5 w-1 h-1 bg-blue-400 rounded-full shrink-0" />
+                              <span className="flex-1 leading-relaxed">{a}</span>
+                              <button 
+                                onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: Assumption "${a}": ` : `Re: Assumption "${a}": `)}
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-blue-100 rounded text-blue-400 transition-opacity"
+                                title="Add feedback for this assumption"
+                              >
+                                <MessageSquare className="w-3 h-3" />
+                              </button>
                             </li>
                           ))}
                         </ul>
@@ -3202,7 +3249,9 @@ export default function App() {
                     )}
                     title={`View Day ${i + 1}: ${day.date}`}
                   >
-                    {day.date}
+                    <span className="text-[10px] sm:text-xs font-black tracking-tighter whitespace-nowrap">
+                      {formatDateButton(day.date)}
+                    </span>
                     {weatherData[i] ? (
                       <WeatherIcon icon={weatherData[i].icon} className="w-3 h-3 opacity-80" />
                     ) : (
