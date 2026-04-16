@@ -1215,9 +1215,11 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [aiProposal, setAiProposal] = useState<GeminiProposal | null>(null);
+  const [sessionPrompt, setSessionPrompt] = useState('');
   const [rejectedSuggestionIds, setRejectedSuggestionIds] = useState<string[]>([]);
   const [rejectedAssumptionIdxs, setRejectedAssumptionIdxs] = useState<number[]>([]);
   const [rejectedCoreIds, setRejectedCoreIds] = useState<string[]>([]);
+  const [saveToPlacesIds, setSaveToPlacesIds] = useState<string[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -1333,7 +1335,15 @@ export default function App() {
       // If we are in list view, we are likely creating a new trip, so pass an empty itinerary
       const contextItinerary = view === 'list' ? [] : itinerary;
       const contextMembers = members.length > 0 ? members : masterTravellers;
-      const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
+      
+      // If customPrompt is provided (regeneration), we should prepend the sessionPrompt to maintain context
+      let finalPrompt = '';
+      if (customPrompt) {
+        finalPrompt = `ORIGINAL REQUEST: ${sessionPrompt}\n\nFEEDBACK/REVISIONS: ${customPrompt}`;
+      } else {
+        finalPrompt = aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
+        setSessionPrompt(finalPrompt); // Store the original prompt for this session
+      }
       
       console.log('AI Action:', mode, 'Prompt:', finalPrompt);
       const proposal = await geminiService.proposeChanges(
@@ -1355,6 +1365,7 @@ export default function App() {
       setRejectedSuggestionIds([]); // Reset rejections for new proposal
       setRejectedAssumptionIdxs([]); // Reset assumption rejections for new proposal
       setRejectedCoreIds([]); // Reset core rejections for new proposal
+      setSaveToPlacesIds([]); // Reset move to places for new proposal
       setShowAiAssistant(true); // Ensure panel is open to show proposal
       setAiPrompt('');
     } catch (err) {
@@ -1377,7 +1388,7 @@ export default function App() {
       const filteredItinerary = aiProposal.itinerary.map(day => ({
         ...day,
         events: day.events.filter(event => {
-          if (rejectedCoreIds.includes(event.id)) {
+          if (rejectedCoreIds.includes(event.id) || saveToPlacesIds.includes(event.id)) {
             return false;
           }
           const suggestion = aiProposal.suggestions?.find(s => s.relatedId === event.id);
@@ -1388,9 +1399,19 @@ export default function App() {
         })
       }));
 
+      // Add "Save to Places" items to the shortlist
+      const extraShortlistItems = aiProposal.itinerary.flatMap(d => d.events)
+        .filter(e => saveToPlacesIds.includes(e.id))
+        .map(e => ({
+          name: e.title,
+          category: e.category,
+          description: e.description || '',
+          location: e.location || e.destination || e.origin
+        }));
+
       // Filter out generic neighborhoods from shortlist just in case AI pollutes it
       const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south'];
-      const filteredAiShortlist = (aiProposal.shortlist || []).filter(p => {
+      const filteredAiShortlist = [...(aiProposal.shortlist || []), ...extraShortlistItems].filter(p => {
         const name = p.name?.toLowerCase() || '';
         const isGeneric = genericTerms.some(term => name.includes(term) && name.split(' ').length <= 2);
         if (isGeneric) return false;
@@ -1496,6 +1517,7 @@ export default function App() {
       setAiProposal(null);
       setRejectedSuggestionIds([]);
       setRejectedCoreIds([]);
+      setSaveToPlacesIds([]);
       setShowAiAssistant(false);
     };
 
@@ -2317,11 +2339,9 @@ export default function App() {
       // Handle "Tue Jul 28, 2026" or "Jul 28" or "July 28, 2026"
       const clean = dateStr.includes(',') ? dateStr.split(',')[0].trim() : dateStr.trim();
       
-      // If it looks like "Tue Jul 28", we want "Jul 28"
+      // If it looks like "Tue Jul 28", we want "Jul 28" 
       const parts = clean.split(' ');
-      if (parts.length >= 3) {
-        // Assume format "Day Month Date" or "Month Date Year"
-        // Try to find the month and date
+      if (parts.length >= 2) {
         const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const fullMonthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         
@@ -2329,21 +2349,29 @@ export default function App() {
         let day = '';
         
         for (const p of parts) {
-          const mIdx = monthNames.findIndex(m => p.startsWith(m));
-          const fmIdx = fullMonthNames.findIndex(m => p.startsWith(m));
+          const mIdx = monthNames.findIndex(m => p.toLowerCase().startsWith(m.toLowerCase()));
+          const fmIdx = fullMonthNames.findIndex(m => p.toLowerCase().startsWith(m.toLowerCase()));
           if (mIdx !== -1 || fmIdx !== -1) {
             month = monthNames[mIdx !== -1 ? mIdx : fmIdx];
-          } else if (!isNaN(parseInt(p))) {
-            day = p;
+          } else if (!isNaN(parseInt(p.replace(/[^0-9]/g, '')))) {
+            day = p.replace(/[^0-9]/g, '');
           }
         }
         
         if (month && day) return `${month} ${day}`;
       }
       
+      // If it's pure ISO (YYYY-MM-DD), parse components to avoid timezone shift
+      const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (isoMatch) {
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const mIdx = parseInt(isoMatch[2]) - 1;
+        return `${monthNames[mIdx]} ${parseInt(isoMatch[3])}`;
+      }
+      
       const d = new Date(dateStr);
       if (!isNaN(d.getTime())) {
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
       }
       return dateStr;
     } catch (e) {
@@ -2935,7 +2963,7 @@ export default function App() {
                                   key={idx} 
                                   className={cn(
                                     "px-2 py-1 border rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-sm transition-all",
-                                    rejectedCoreIds.includes(e.id)
+                                    rejectedCoreIds.includes(e.id) || saveToPlacesIds.includes(e.id)
                                       ? "bg-slate-50 border-slate-100 text-slate-400 line-through opacity-60"
                                       : "bg-white border-blue-100 text-blue-700"
                                   )}
@@ -2944,18 +2972,42 @@ export default function App() {
                                    e.category === 'work' ? <Briefcase className="w-2.5 h-2.5" /> :
                                    <MapPin className="w-2.5 h-2.5" />}
                                   {e.title}
-                                  <button 
-                                    onClick={() => {
-                                      if (rejectedCoreIds.includes(e.id)) {
-                                        setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
-                                      } else {
-                                        setRejectedCoreIds(prev => [...prev, e.id]);
-                                      }
-                                    }}
-                                    className="ml-1 hover:text-red-500 transition-colors"
-                                  >
-                                    {rejectedCoreIds.includes(e.id) ? <Plus className="w-2.5 h-2.5" /> : <X className="w-2.5 h-2.5" />}
-                                  </button>
+                                  <div className="flex items-center gap-0.5 ml-1 border-l pl-1 border-slate-100">
+                                    <button 
+                                      onClick={() => {
+                                        if (saveToPlacesIds.includes(e.id)) {
+                                          setSaveToPlacesIds(prev => prev.filter(id => id !== e.id));
+                                        } else {
+                                          setSaveToPlacesIds(prev => [...prev, e.id]);
+                                          setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
+                                        }
+                                      }}
+                                      className={cn(
+                                        "p-0.5 hover:bg-slate-100 rounded transition-colors",
+                                        saveToPlacesIds.includes(e.id) ? "text-blue-600" : "text-slate-400"
+                                      )}
+                                      title="Keep in Shortlist only (not scheduled)"
+                                    >
+                                      <ShoppingBag className="w-2.5 h-2.5" />
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        if (rejectedCoreIds.includes(e.id)) {
+                                          setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
+                                        } else {
+                                          setRejectedCoreIds(prev => [...prev, e.id]);
+                                          setSaveToPlacesIds(prev => prev.filter(id => id !== e.id));
+                                        }
+                                      }}
+                                      className={cn(
+                                        "p-0.5 hover:bg-slate-100 rounded transition-colors",
+                                        rejectedCoreIds.includes(e.id) ? "text-red-600" : "text-slate-400"
+                                      )}
+                                      title="Reject activity entirely"
+                                    >
+                                      {rejectedCoreIds.includes(e.id) ? <Plus className="w-2.5 h-2.5" /> : <X className="w-2.5 h-2.5" />}
+                                    </button>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -2967,7 +3019,7 @@ export default function App() {
 
                     {/* Consistently handled below */}
 
-                    {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0 || rejectedCoreIds.length > 0) && (
+                    {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0 || rejectedCoreIds.length > 0 || saveToPlacesIds.length > 0) && (
                       <div className="mb-4 p-4 bg-red-50 rounded-2xl border border-red-100 shadow-sm text-center">
                         <button 
                           disabled={isAiLoading}
@@ -2978,11 +3030,16 @@ export default function App() {
                               const event = aiProposal.itinerary.flatMap(d => d.events).find(ev => ev.id === id);
                               return event?.title;
                             }).filter(Boolean).join('; ');
+                            const shortlistOnly = saveToPlacesIds.map(id => {
+                              const event = aiProposal.itinerary.flatMap(d => d.events).find(ev => ev.id === id);
+                              return event?.title;
+                            }).filter(Boolean).join('; ');
                             
                             let feedback = '';
                             if (assumptionRejections) feedback += `REJECT ASSUMPTIONS: ${assumptionRejections}. `;
                             if (suggestionRejections) feedback += `REJECT SUGGESTIONS: ${suggestionRejections}. `;
-                            if (coreRejections) feedback += `REJECT PLANNED ACTIVITIES (I didn't ask for these): ${coreRejections}. `;
+                            if (coreRejections) feedback += `REJECT PLANNED ACTIVITIES (Remove entirely): ${coreRejections}. `;
+                            if (shortlistOnly) feedback += `MOVE TO PLACES/SHORTLIST (Don't schedule on calendar): ${shortlistOnly}. `;
                             feedback += `Please rethink the itinerary and provide alternatives or adjustments.`;
                             
                             setAiPrompt(prev => prev ? `${prev}\n\n${feedback}` : feedback);
