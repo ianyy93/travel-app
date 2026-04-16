@@ -150,7 +150,7 @@ export const geminiService = {
          - MANDATORY LINKING (ZERO TOLERANCE): If an event is NOT a meal placeholder and was NOT explicitly scheduled in the prompt, it MUST have a corresponding entry in the root 'suggestions' array.
       4. MEALS (MANDATORY):
          - Core: Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
-         - Suggestions (STRICT): You MUST provide 3 specific restaurant names for every Breakfast, Lunch, and Dinner. These MUST be included in the top-level 'suggestions' array (linked via 'relatedId'). If a meal is explicitly "taken care of" or "included" in an event, mark it as 'logistics' or remove suggestions for that specific slot.
+         - Suggestions (STRICT): You MUST provide 3 specific restaurant names for every Breakfast, Lunch, and Dinner. These MUST be included in the top-level 'suggestions' array (linked via 'relatedId') AND also inside the 'suggestions' field of the corresponding event. If a meal is explicitly "taken care of" or "included" in an event, mark it as 'logistics' or remove suggestions for that specific slot.
          - ASSIGNMENT: If members have different schedules (e.g., some working remote, some attending events), create separate meal events assigned to the relevant members.
       5. TRAVEL & ROUTES (STRICT): Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (Subway/Bus), or 'drive' (Taxi/Uber). Add travel for EVERY location change, including back-to-back suggested activities. Separate travel for split members is required if they go to different places.
       6. STAYS & LOGISTICS: Every day MUST end with a 'stay'. If members move hotels, explicitly add a 'logistics' or 'stay' event reflecting this change in the itinerary.
@@ -159,7 +159,7 @@ export const geminiService = {
       9. MEMBER ASSIGNMENT (CRITICAL): Assign 'memberIds' strictly as requested. Every member, including pets if mentioned, MUST be assigned to the activities they are attending. For days where members split, ensure events identify who is attending what. Stays and shared meals should usually include 'everyone' unless specified.
      10. TITLE FORMAT (STRICT): Use exactly "[Place(s)] [Year]" (e.g., "NYC 2026").
      11. TRIP END: Stop all activities/meals once the return flight or final travel home begins. 
-     12. PLACES SHORTLIST: Return a 'shortlist' array of objects (name, category, description, location: {lat, lng}) for all suggested or requested locations mentioned in the itinerary. This ensures the Places tab is populated.
+     12. PLACES SHORTLIST (STRICT): Return a 'shortlist' array of specific locations. DO NOT include generic neighborhoods, areas, or districts (e.g., skip "Midtown West", "Downtown", "Brooklyn"). ONLY include specific places of interest, sights, or hotels.
      13. RESERVATIONS & BOOKINGS: If the user's prompt contains flight numbers, hotels, or restaurants already booked, populate the 'flightInfo', 'stays', 'restaurants', or 'experiences' root fields in the JSON response.
     `;
 

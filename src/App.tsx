@@ -1220,6 +1220,7 @@ export default function App() {
   const [rejectedAssumptionIdxs, setRejectedAssumptionIdxs] = useState<number[]>([]);
   const [rejectedCoreIds, setRejectedCoreIds] = useState<string[]>([]);
   const [saveToPlacesIds, setSaveToPlacesIds] = useState<string[]>([]);
+  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -1366,6 +1367,7 @@ export default function App() {
       setRejectedAssumptionIdxs([]); // Reset assumption rejections for new proposal
       setRejectedCoreIds([]); // Reset core rejections for new proposal
       setSaveToPlacesIds([]); // Reset move to places for new proposal
+      setSelectedSuggestionIds([]); // Reset selected suggestions for new proposal
       setShowAiAssistant(true); // Ensure panel is open to show proposal
       setAiPrompt('');
     } catch (err) {
@@ -1392,10 +1394,22 @@ export default function App() {
             return false;
           }
           const suggestion = aiProposal.suggestions?.find(s => s.relatedId === event.id);
-          if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
+          if (suggestion && suggestion.type !== 'food' && rejectedSuggestionIds.includes(suggestion.id)) {
             return false;
           }
           return true;
+        }).map(event => {
+          // If a food suggestion was selected for this meal, update its location
+          const selectedFood = aiProposal.suggestions?.find(s => s.relatedId === event.id && s.type === 'food' && selectedSuggestionIds.includes(s.id));
+          if (selectedFood) {
+            return {
+              ...event,
+              location: selectedFood.location,
+              title: selectedFood.text,
+              description: selectedFood.description
+            };
+          }
+          return event;
         })
       }));
 
@@ -1410,16 +1424,22 @@ export default function App() {
         }));
 
       // Filter out generic neighborhoods from shortlist just in case AI pollutes it
-      const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south'];
+      const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south', 'village', 'square', 'park', 'heights', 'side', 'lower', 'upper'];
       const filteredAiShortlist = [...(aiProposal.shortlist || []), ...extraShortlistItems].filter(p => {
         const name = p.name?.toLowerCase() || '';
-        const isGeneric = genericTerms.some(term => name.includes(term) && name.split(' ').length <= 2);
-        if (isGeneric) return false;
+        const isGeneric = genericTerms.some(term => name.includes(term) && name.split(' ').length <= 1);
+        const isAreaDescription = name.includes('area') || name.includes('neighborhood') || name.includes('district');
+        if (isGeneric || isAreaDescription) return false;
         
         // Also filter if it's a rejected suggestion
         const suggestion = aiProposal.suggestions?.find(s => s.text.includes(p.name));
-        if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
-          return false;
+        if (suggestion) {
+          if (suggestion.type === 'food' && !selectedSuggestionIds.includes(suggestion.id)) {
+            return false; // Only add restaurants if selected
+          }
+          if (suggestion.type !== 'food' && rejectedSuggestionIds.includes(suggestion.id)) {
+            return false;
+          }
         }
         return true;
       });
@@ -1518,6 +1538,7 @@ export default function App() {
       setRejectedSuggestionIds([]);
       setRejectedCoreIds([]);
       setSaveToPlacesIds([]);
+      setSelectedSuggestionIds([]);
       setShowAiAssistant(false);
     };
 
@@ -2906,28 +2927,28 @@ export default function App() {
 
                                {foodSugs.length > 0 && (
                                  <div>
-                                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Restaurant Suggestions (Pre-selected)</h4>
+                                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Restaurant Suggestions (Opt-in to Places)</h4>
                                    <div className="flex flex-wrap gap-2">
                                      {foodSugs.map((s) => (
                                        <button 
                                          key={s.id} 
                                          onClick={() => {
-                                           if (rejectedSuggestionIds.includes(s.id)) {
-                                             setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
+                                           if (selectedSuggestionIds.includes(s.id)) {
+                                             setSelectedSuggestionIds(prev => prev.filter(id => id !== s.id));
                                            } else {
-                                             setRejectedSuggestionIds(prev => [...prev, s.id]);
+                                             setSelectedSuggestionIds(prev => [...prev, s.id]);
                                            }
                                          }}
                                          className={cn(
                                            "px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all",
-                                           rejectedSuggestionIds.includes(s.id)
-                                             ? "bg-slate-50 border-slate-100 text-slate-400"
-                                             : "bg-orange-50 border-orange-100 text-orange-700"
+                                           selectedSuggestionIds.includes(s.id)
+                                             ? "bg-blue-50 border-blue-200 text-blue-700 shadow-sm"
+                                             : "bg-slate-50 border-slate-100 text-slate-400"
                                          )}
                                        >
                                          <Utensils className="w-2.5 h-2.5" />
                                          {s.text}
-                                         {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-2 h-2 ml-0.5" /> : <X className="w-2 h-2 ml-0.5" />}
+                                         {selectedSuggestionIds.includes(s.id) ? <Check className="w-2 h-2 ml-0.5" /> : <Plus className="w-2 h-2 ml-0.5" />}
                                        </button>
                                      ))}
                                    </div>
@@ -2942,10 +2963,9 @@ export default function App() {
                     {(() => {
                       const coreEvents = aiProposal.itinerary
                         .flatMap(d => d.events)
-                        .filter(e => !aiProposal.suggestions?.some(s => s.relatedId === e.id));
+                        .filter(e => !aiProposal.suggestions?.some(s => s.relatedId === e.id && s.type !== 'food'));
                       
                       const nonMealCore = coreEvents.filter(e => 
-                        e.category !== 'food' && 
                         e.category !== 'stay' && 
                         e.category !== 'travel' && 
                         e.category !== 'walk' && 
@@ -2956,60 +2976,99 @@ export default function App() {
                       if (nonMealCore.length > 0) {
                         return (
                           <div className="mb-4">
-                            <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Planned Activities (From Prompt)</h4>
-                            <div className="flex flex-wrap gap-2">
-                              {nonMealCore.map((e, idx) => (
-                                <div 
-                                  key={idx} 
-                                  className={cn(
-                                    "px-2 py-1 border rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-sm transition-all",
-                                    rejectedCoreIds.includes(e.id) || saveToPlacesIds.includes(e.id)
-                                      ? "bg-slate-50 border-slate-100 text-slate-400 line-through opacity-60"
-                                      : "bg-white border-blue-100 text-blue-700"
-                                  )}
-                                >
-                                  {e.category === 'flight' || e.category === 'logistics' ? <Plane className="w-2.5 h-2.5" /> : 
-                                   e.category === 'work' ? <Briefcase className="w-2.5 h-2.5" /> :
-                                   <MapPin className="w-2.5 h-2.5" />}
-                                  {e.title}
-                                  <div className="flex items-center gap-0.5 ml-1 border-l pl-1 border-slate-100">
-                                    <button 
-                                      onClick={() => {
-                                        if (saveToPlacesIds.includes(e.id)) {
-                                          setSaveToPlacesIds(prev => prev.filter(id => id !== e.id));
-                                        } else {
-                                          setSaveToPlacesIds(prev => [...prev, e.id]);
-                                          setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
-                                        }
-                                      }}
-                                      className={cn(
-                                        "p-0.5 hover:bg-slate-100 rounded transition-colors",
-                                        saveToPlacesIds.includes(e.id) ? "text-blue-600" : "text-slate-400"
-                                      )}
-                                      title="Keep in Shortlist only (not scheduled)"
-                                    >
-                                      <ShoppingBag className="w-2.5 h-2.5" />
-                                    </button>
-                                    <button 
-                                      onClick={() => {
-                                        if (rejectedCoreIds.includes(e.id)) {
-                                          setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
-                                        } else {
-                                          setRejectedCoreIds(prev => [...prev, e.id]);
-                                          setSaveToPlacesIds(prev => prev.filter(id => id !== e.id));
-                                        }
-                                      }}
-                                      className={cn(
-                                        "p-0.5 hover:bg-slate-100 rounded transition-colors",
-                                        rejectedCoreIds.includes(e.id) ? "text-red-600" : "text-slate-400"
-                                      )}
-                                      title="Reject activity entirely"
-                                    >
-                                      {rejectedCoreIds.includes(e.id) ? <Plus className="w-2.5 h-2.5" /> : <X className="w-2.5 h-2.5" />}
-                                    </button>
+                            <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Planned Activities & Meals</h4>
+                            <div className="space-y-2">
+                              {nonMealCore.map((e, idx) => {
+                                const relatedFoodSugs = aiProposal.suggestions?.filter(s => s.relatedId === e.id && s.type === 'food') || [];
+                                return (
+                                  <div 
+                                    key={idx} 
+                                    className={cn(
+                                      "p-2 border rounded-xl flex flex-col gap-2 shadow-sm transition-all",
+                                      rejectedCoreIds.includes(e.id) || saveToPlacesIds.includes(e.id)
+                                        ? "bg-slate-50 border-slate-100 opacity-60"
+                                        : "bg-white border-blue-100"
+                                    )}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        {e.category === 'flight' || e.category === 'logistics' ? <Plane className="w-3 h-3 text-blue-500" /> : 
+                                         e.category === 'food' ? <Utensils className="w-3 h-3 text-rose-500" /> :
+                                         e.category === 'work' ? <Briefcase className="w-3 h-3 text-blue-500" /> :
+                                         <MapPin className="w-3 h-3 text-emerald-500" />}
+                                        <span className={cn(
+                                          "text-[10px] font-bold truncate",
+                                          rejectedCoreIds.includes(e.id) || saveToPlacesIds.includes(e.id) ? "text-slate-400 line-through" : "text-slate-700"
+                                        )}>
+                                          {e.title}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-0.5">
+                                        <button 
+                                          onClick={() => {
+                                            if (saveToPlacesIds.includes(e.id)) {
+                                              setSaveToPlacesIds(prev => prev.filter(id => id !== e.id));
+                                            } else {
+                                              setSaveToPlacesIds(prev => [...prev, e.id]);
+                                              setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
+                                            }
+                                          }}
+                                          className={cn(
+                                            "p-1 hover:bg-slate-100 rounded transition-colors",
+                                            saveToPlacesIds.includes(e.id) ? "text-blue-600" : "text-slate-400"
+                                          )}
+                                          title="Keep in Shortlist only (not scheduled)"
+                                        >
+                                          <ShoppingBag className="w-3 h-3" />
+                                        </button>
+                                        <button 
+                                          onClick={() => {
+                                            if (rejectedCoreIds.includes(e.id)) {
+                                              setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
+                                            } else {
+                                              setRejectedCoreIds(prev => [...prev, e.id]);
+                                              setSaveToPlacesIds(prev => prev.filter(id => id !== e.id));
+                                            }
+                                          }}
+                                          className={cn(
+                                            "p-1 hover:bg-slate-100 rounded transition-colors",
+                                            rejectedCoreIds.includes(e.id) ? "text-red-600" : "text-slate-400"
+                                          )}
+                                          title="Reject activity entirely"
+                                        >
+                                          {rejectedCoreIds.includes(e.id) ? <Plus className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {relatedFoodSugs.length > 0 && (
+                                      <div className="flex flex-wrap gap-1 border-t pt-2 mt-1">
+                                        {relatedFoodSugs.map(s => (
+                                          <button
+                                            key={s.id}
+                                            onClick={() => {
+                                              if (selectedSuggestionIds.includes(s.id)) {
+                                                setSelectedSuggestionIds(prev => prev.filter(id => id !== s.id));
+                                              } else {
+                                                setSelectedSuggestionIds(prev => [...prev, s.id]);
+                                              }
+                                            }}
+                                            className={cn(
+                                              "px-1.5 py-0.5 rounded text-[8px] font-black uppercase transition-all flex items-center gap-1",
+                                              selectedSuggestionIds.includes(s.id)
+                                                ? "bg-blue-600 text-white shadow-sm"
+                                                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                            )}
+                                          >
+                                            {s.text}
+                                            {selectedSuggestionIds.includes(s.id) && <Check className="w-2 h-2" />}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         );
