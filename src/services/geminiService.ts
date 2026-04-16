@@ -65,7 +65,7 @@ export const geminiService = {
       userPrompt.toLowerCase().includes('create a trip');
 
     // Truncate current itinerary if it's too large to avoid prompt bloat
-    const contextItinerary = currentItinerary.length > 15 ? currentItinerary.slice(0, 15) : currentItinerary;
+    const contextItinerary = currentItinerary.length > 31 ? currentItinerary.slice(0, 31) : currentItinerary;
 
     let modeInstruction = '';
     if (mode === 'details') {
@@ -99,22 +99,26 @@ export const geminiService = {
       1. Return JSON matching the schema.
       2. Every 'activity' MUST have 'location' with 'name', 'lat', 'lng'.
       3. MANDATORY EXPLANATION: Describe exactly what you changed/added in the 'explanation' field.
-      4. ASSUMPTIONS & SUGGESTIONS: You MUST populate the 'assumptions' and 'suggestions' arrays.
-         - 'assumptions': List any logical guesses you made (e.g. "Assumed you want to stay in Midtown").
-         - 'suggestions': List specific additions or changes you are proposing (e.g. "Suggested a visit to the Museum of the Dog"). 
-         - For every new activity you add to the itinerary that wasn't explicitly in the prompt, you MUST create a corresponding 'suggestion' with a 'relatedId' matching the event's 'id'.
-      5. Categories: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
-      5. Date format: "Month Day" (e.g., "May 14").
-      6. NAVIGATION: ${mode === 'navigation' || mode === 'full' || mode === 'autofill' ? "Add 'travel' events ONLY between confirmed locations (where 'location' is set). Do NOT add travel to/from suggestion tiles. Factor in realistic travel time (min 20-40m for cities)." : "No travel events."}
-      7. MEALS & GENERIC LOCATIONS: Include 3 meals/day. For generic meals, provide 3-4 specific options in 'suggestions'. CRITICAL: Do NOT use generic area names as the primary 'location' for a meal event. Leave 'location' empty for these. Do NOT add meal suggestions for members attending full-day events (e.g. conferences) unless requested.
-      8. STRICT PROMPT ADHERENCE: Do NOT add any activities, sights, or locations that were not explicitly mentioned in the user prompt or provided links. If the user provides a link to a 'French Bistro' but the name is not in the text, do NOT guess the name. Instead, use 'French Bistro (from link)' as the title. NEVER add 'High Line', 'Dog Runs', or other 'helpful' suggestions unless they are in the prompt.
-      9. TIMES: Every event MUST have 'startTime' and 'endTime' (AM/PM). Use realistic times (e.g. check-out by 11 AM/12 PM).
-     10. SHORTLIST & SCHEDULING: Add places mentioned without a specific time to 'shortlist' ONLY. Do NOT 'propose' a time for them in the itinerary.
-     11. SPLIT ITINERARIES: Ensure NO time overlaps for any member. If multiple people are on the trip, they can have separate activities at the same time.
-     12. TITLE & DATES: For new trips, use "[Place] [Year]" format.
-     13. NO FILLING GAPS & STAY TIMING: Unless mode is 'autofill', do NOT add any activities to fill empty time. If a day has no requested activities, it should only contain the 'stay' event and necessary travel. The 'stay' event should start AFTER all other activities and meals are finished (typically 9:00 PM or later).
-     14. RESERVATIONS: Extract ALL flights, stays, rentals, and bookings into the root-level reservation fields.
-     15. TRAVEL MODE: Default to 'transit' or 'walk' unless 'rentalInfo' (rental car) is explicitly provided. Do NOT use 'drive' if the user is flying and has no rental car.
+      4. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
+      5. BASELINE vs SUGGESTIONS: Distinguish between the 'Core Itinerary' and 'Optional Suggestions'.
+         - 'Core Itinerary' (NO top-level suggestion): 
+            * Explicitly requested events (e.g. Flight PD 605, Remote Work, Ian @ Conference).
+            * Baseline Meal Placeholders (Breakfast 8AM, Lunch 12PM, Dinner 7PM).
+            * Checkout/Stay events.
+         - 'Optional Suggestions' (MUST have top-level suggestion with 'relatedId'):
+            * AI-added leisure activities not in prompt.
+            * Logistical suggestions like "Transfer to New Hotel".
+            * Specific restaurant recommendations.
+      6. DATE FORMAT: "Month Day" (e.g., "May 14").
+      7. NAVIGATION & TRANSFERS: Add 'travel' events between locations. Proactively suggest "Move to [Hotel Name]" as a 'suggestion' if stay locations change between days.
+      8. MEALS: Always include 3 meal placeholders per day in the 'Core Itinerary'. 
+         - Title: "Breakfast", "Lunch", or "Dinner".
+         - Recommendations: Provide 3 specific restaurant options in the 'event.suggestions' array inside that meal event.
+      9. STRICT PROMPT ADHERENCE: Do NOT add leisure activities that weren't requested. If "Remote Work" is in the prompt, it must be a Core activity for those members.
+     10. TIMES: Every event MUST have 'startTime' and 'endTime' (AM/PM). Use realistic times.
+     11. SHORTLIST: Add places mentioned without a specific time to 'shortlist' ONLY. 
+     12. MEMBERSHIP: Ensure 'memberIds' strictly match the prompt. (e.g. Carrie & Pepper work remote, Ian at Javits).
+     13. NO SKIPPING DAYS: Include every day between start/end dates. Every day must at least have meals and a 'stay' event.
     `;
 
     try {
