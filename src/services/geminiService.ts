@@ -3,9 +3,10 @@ import { DayPlan, TripMember } from "../constants";
 import { jsonrepair } from "jsonrepair";
 import firebaseConfig from "../../firebase-applet-config.json";
 
-// WARNING: Temporary setup to restore functionality across all environments. 
-// For better security, it is recommended to move Gemini API calls to a backend proxy in the future.
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyDVXLok_yn4HafkM5uANjn7-WQ9fH1cjNk";
+const GEMINI_KEY =
+  import.meta.env.VITE_GEMINI_API_KEY ||
+  process.env.GEMINI_API_KEY ||
+  firebaseConfig.apiKey;
 const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
 
 export interface GeminiSuggestion {
