@@ -45,7 +45,7 @@ export const geminiService = {
     currentRestaurants: any[] = [],
     currentExperiences: any[] = []
   ): Promise<GeminiProposal> {
-    if (!process.env.GEMINI_API_KEY) {
+    if (!GEMINI_KEY) {
       throw new Error("GEMINI_API_KEY is not configured. Please add it in the Settings menu.");
     }
 
@@ -364,7 +364,7 @@ export const geminiService = {
     event: any,
     refinePrompt: string
   ): Promise<any[]> {
-    if (!process.env.GEMINI_API_KEY) {
+    if (!GEMINI_KEY) {
       throw new Error("GEMINI_API_KEY is not configured.");
     }
 
