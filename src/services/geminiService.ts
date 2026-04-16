@@ -1,8 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DayPlan, TripMember } from "../constants";
 import { jsonrepair } from "jsonrepair";
+import firebaseConfig from "../../firebase-applet-config.json";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+// Use environment variable if available, otherwise fallback to Firebase API key
+const GEMINI_KEY = process.env.GEMINI_API_KEY || firebaseConfig.apiKey;
+const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
 
 export interface GeminiSuggestion {
   id: string;
