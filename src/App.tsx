@@ -2441,7 +2441,7 @@ export default function App() {
         {/* Member Initials - Top Right Inside */}
         {event.memberIds && event.memberIds.length > 0 && (
           <div className="absolute top-4 right-4 flex -space-x-1.5 z-20">
-            {event.memberIds.map(mid => {
+            {(event.memberIds.includes('everyone') ? masterTravellers.map(m => m.id) : event.memberIds).map(mid => {
               const member = masterTravellers.find(m => m.id === mid);
               if (!member) return null;
               return (
@@ -2801,19 +2801,7 @@ export default function App() {
                             </li>
                           ))}
                         </ul>
-                        {rejectedAssumptionIdxs.length > 0 && (
-                          <button 
-                            onClick={() => {
-                              const rejections = rejectedAssumptionIdxs.map(idx => aiProposal?.assumptions[idx]).join('; ');
-                              const feedback = `REJECT ASSUMPTIONS: ${rejections}. Please rethink the itinerary accordingly.`;
-                              setAiPrompt(prev => prev ? `${prev}\n\n${feedback}` : feedback);
-                              handleAiAction('full', aiPrompt + `\n\n${feedback}`);
-                            }}
-                            className="mt-3 w-full py-2.5 bg-red-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-700 shadow-sm transition-all flex items-center justify-center gap-2"
-                          >
-                            <RefreshCw className="w-3 h-3" /> Update Proposal
-                          </button>
-                        )}
+                        {/* Consistently handled below */}
                       </div>
                     )}
 
@@ -2844,23 +2832,33 @@ export default function App() {
                                 </div>
                                 <p className="text-xs font-medium text-slate-700 leading-tight">{s.text}</p>
                               </div>
-                              <button 
-                                onClick={() => {
-                                  if (rejectedSuggestionIds.includes(s.id)) {
-                                    setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
-                                  } else {
-                                    setRejectedSuggestionIds(prev => [...prev, s.id]);
-                                  }
-                                }}
-                                className={cn(
-                                  "w-6 h-6 rounded-full flex items-center justify-center transition-colors",
-                                  rejectedSuggestionIds.includes(s.id)
-                                    ? "bg-slate-200 text-slate-500"
-                                    : "bg-blue-600 text-white"
-                                )}
-                              >
-                                {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-3 h-3" /> : <Check className="w-3 h-3" />}
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button 
+                                  onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: Suggestion "${s.text}": ` : `Re: Suggestion "${s.text}": `)}
+                                  className="p-1 px-2 hover:bg-blue-50 rounded-lg text-blue-400 transition-colors"
+                                  title="Add feedback for this suggestion"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    if (rejectedSuggestionIds.includes(s.id)) {
+                                      setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
+                                    } else {
+                                      setRejectedSuggestionIds(prev => [...prev, s.id]);
+                                    }
+                                  }}
+                                  className={cn(
+                                    "w-6 h-6 rounded-full flex items-center justify-center transition-colors shadow-sm",
+                                    rejectedSuggestionIds.includes(s.id)
+                                      ? "bg-slate-200 text-slate-500"
+                                      : "bg-blue-600 text-white"
+                                  )}
+                                  title={rejectedSuggestionIds.includes(s.id) ? "Approve suggestion" : "Reject suggestion"}
+                                >
+                                  {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-3 h-3" /> : <Check className="w-3 h-3" />}
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -2900,6 +2898,30 @@ export default function App() {
                       }
                       return null;
                     })()}
+
+                    {/* Consistently handled below */}
+
+                    {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0) && (
+                      <div className="mb-4 p-4 bg-red-50 rounded-2xl border border-red-100 shadow-sm text-center">
+                        <button 
+                          onClick={() => {
+                            const assumptionRejections = rejectedAssumptionIdxs.map(idx => aiProposal?.assumptions[idx]).join('; ');
+                            const suggestionRejections = rejectedSuggestionIds.map(id => aiProposal?.suggestions?.find(s => s.id === id)?.text).filter(Boolean).join('; ');
+                            
+                            let feedback = '';
+                            if (assumptionRejections) feedback += `REJECT ASSUMPTIONS: ${assumptionRejections}. `;
+                            if (suggestionRejections) feedback += `REJECT SUGGESTIONS: ${suggestionRejections}. `;
+                            feedback += `Please rethink the itinerary and provide alternatives or adjustments.`;
+                            
+                            setAiPrompt(prev => prev ? `${prev}\n\n${feedback}` : feedback);
+                            handleAiAction('full', (aiPrompt ? aiPrompt + '\n\n' : '') + feedback);
+                          }}
+                          className="w-full py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-700 shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-2 active:scale-95"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" /> Regenerate Proposal with Feedback
+                        </button>
+                      </div>
+                    )}
 
                     <div className="flex gap-2">
                       <button 
