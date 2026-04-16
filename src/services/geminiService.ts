@@ -35,6 +35,7 @@ export type GenerationMode = 'full' | 'details' | 'places' | 'navigation' | 'sho
 
 export const geminiService = {
   async proposeChanges(
+    // Triggering fresh build with VITE_GEMINI_API_KEY
     currentItinerary: DayPlan[],
     userPrompt: string,
     mode: GenerationMode = 'full',
