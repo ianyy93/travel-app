@@ -2819,7 +2819,7 @@ export default function App() {
 
                     {aiProposal.suggestions && aiProposal.suggestions.length > 0 && (
                       <div className="mb-4">
-                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Suggestions</h4>
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Optional Suggestions</h4>
                         <div className="space-y-2">
                           {aiProposal.suggestions.map((s) => (
                             <div 
@@ -2866,6 +2866,40 @@ export default function App() {
                         </div>
                       </div>
                     )}
+
+                    {(() => {
+                      const coreEvents = aiProposal.itinerary
+                        .flatMap(d => d.events)
+                        .filter(e => !aiProposal.suggestions?.some(s => s.relatedId === e.id));
+                      
+                      const nonMealCore = coreEvents.filter(e => 
+                        e.category !== 'food' && 
+                        e.category !== 'stay' && 
+                        e.category !== 'travel' && 
+                        e.category !== 'walk' && 
+                        e.category !== 'transit' && 
+                        e.category !== 'drive'
+                      );
+                      
+                      if (nonMealCore.length > 0) {
+                        return (
+                          <div className="mb-4">
+                            <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Confirmed Additions</h4>
+                            <div className="flex flex-wrap gap-2">
+                              {nonMealCore.map((e, idx) => (
+                                <div key={idx} className="px-2 py-1 bg-white border border-blue-100 rounded-lg text-[10px] font-bold text-blue-700 flex items-center gap-1 shadow-sm">
+                                  {e.category === 'flight' || e.category === 'logistics' ? <Plane className="w-2.5 h-2.5" /> : 
+                                   e.category === 'work' ? <Briefcase className="w-2.5 h-2.5" /> :
+                                   <MapPin className="w-2.5 h-2.5" />}
+                                  {e.title}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
 
                     <div className="flex gap-2">
                       <button 

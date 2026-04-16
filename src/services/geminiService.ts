@@ -137,21 +137,21 @@ export const geminiService = {
       1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
       3. CORE vs OPTIONAL (CRITICAL):
-         - 'Core Itinerary': Mandatory requested events from prompt (e.g. flights, specific meetings, requested work) and baseline meal placeholders (Breakfast, Lunch, Dinner).
-         - 'Optional Suggestions': ANY AI-suggested activity, specific restaurant choice, or logistical move (e.g. hotel change).
-         - MANDATORY LINKING: Any 'Optional' event MUST be referenced in the 'suggestions' array. Travel events related to an optional activity MUST also be linked to that activity's suggestion ID or have their own.
-         - CONSISTENCY: Every location or activity mentioned in your 'explanation' MUST be in the 'itinerary'.
+         - 'Core Itinerary': ONLY requested events from the prompt (e.g. flights, specific meetings, requested work) and baseline meal placeholders (Breakfast, Lunch, Dinner).
+         - 'Optional Suggestions': ANY AI-suggested activity (e.g., Central Park, Museums), specific restaurant choice, or logistical move (e.g., hotel change).
+         - MANDATORY LINKING (STRICT): Every 'Optional' event MUST have a clear entry in the 'suggestions' array. The event's 'id' MUST match the suggestion's 'relatedId'. If it's not in the 'suggestions' array, it's considered Core and is WRONG if it wasn't requested.
       4. MEALS:
          - Core: Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
          - Suggestions: Provide 3 specific restaurant names in 'event.suggestions' inside the CORE meal events. If different members dine separately, create separate meal events.
       5. TRAVEL & ROUTES (STRICT): Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (Subway/Bus), or 'drive' (Taxi/Uber). Add travel for EVERY location change, including back-to-back suggested activities. Separate travel for split members is required if they go to different places.
       6. STAYS & LOGISTICS: Every day MUST end with a 'stay'. If members move hotels (e.g. Carrie moves day 2), explicitly add a 'logistics' or 'stay' event reflecting this change in the itinerary.
-      7. NO SKIPPING DAYS: Include every day between start and end dates.
+      7. FULL DATE RANGE: Include EVERY single day mentioned in the prompt. If the prompt says "Tue Jul 28 to Sun Aug 02", you MUST include 6 days: Jul 28, 29, 30, 31, Aug 01, Aug 02. Never end early.
       8. ASSUMPTIONS: List logical assumptions in the 'assumptions' array.
       9. MEMBER ASSIGNMENT (CRITICAL): Assign 'memberIds' strictly as requested. Every member, including Pepper (the dog), MUST be assigned to the activities they are attending. Stays should usually include everyone ('everyone' or list of all IDs) unless someone is staying elsewhere. Ensure dog-friendly activities are suggested if Pepper is included.
      10. TITLE FORMAT (STRICT): Use exactly "[Place(s)] [Year]" (e.g., "NYC 2026").
      11. TRIP END: Stop all activities/meals once the return flight or travel home begins. 
      12. PLACES SHORTLIST: Return a 'shortlist' array of objects (name, category, description, location: {lat, lng}) for all suggested or requested locations mentioned in the itinerary. This ensures the Places tab is populated.
+     13. RESERVATIONS & BOOKINGS (MANDATORY): If the user's prompt contains flight numbers, hotels, or restaurants already booked, YOU MUST populate the 'flightInfo', 'stays', 'restaurants', or 'experiences' root fields in the JSON response. This is required for the application's Reservations tab.
     `;
 
     const models = [
