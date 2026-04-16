@@ -7,6 +7,13 @@ const GEMINI_KEY =
   import.meta.env.VITE_GEMINI_API_KEY ||
   process.env.GEMINI_API_KEY ||
   firebaseConfig.apiKey;
+
+// Log which key source is being used (obfuscated for safety)
+console.log('Gemini initialized with key source:', 
+  import.meta.env.VITE_GEMINI_API_KEY ? 'Cloudflare Build Var' : 
+  process.env.GEMINI_API_KEY ? 'AI Studio Secret' : 'Firebase Fallback'
+);
+
 const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
 
 export interface GeminiSuggestion {
@@ -112,7 +119,7 @@ export const geminiService = {
 
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-1.5-flash",
         contents: userPrompt,
         config: {
           systemInstruction,
@@ -387,7 +394,7 @@ export const geminiService = {
 
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-1.5-flash",
         contents: "Refine suggestions based on: " + refinePrompt,
         config: {
           systemInstruction,
