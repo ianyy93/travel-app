@@ -36,9 +36,47 @@ export interface GeminiProposal {
   stays?: any[];
   restaurants?: any[];
   members?: TripMember[];
+  modelInfo?: {
+    name: string;
+    quotaRemaining?: number;
+  };
 }
 
 export type GenerationMode = 'full' | 'details' | 'places' | 'navigation' | 'shortlist' | 'autofill';
+
+const QUOTA_LIMITS: Record<string, number> = {
+  "gemini-3-flash-preview": 20,
+  "gemini-3.1-flash-lite-preview": 500,
+  "gemini-2.5-flash-preview": 20,
+  "gemini-2.5-flash-lite-preview": 500
+};
+
+const trackUsage = (modelName: string) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const key = `gemini_usage_${today}`;
+    const usage = JSON.parse(localStorage.getItem(key) || '{}');
+    usage[modelName] = (usage[modelName] || 0) + 1;
+    localStorage.setItem(key, JSON.stringify(usage));
+    
+    const limit = QUOTA_LIMITS[modelName] || 20;
+    return Math.max(0, limit - usage[modelName]);
+  } catch (e) {
+    return undefined;
+  }
+};
+
+const getRemainingQuota = (modelName: string) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const key = `gemini_usage_${today}`;
+    const usage = JSON.parse(localStorage.getItem(key) || '{}');
+    const limit = QUOTA_LIMITS[modelName] || 20;
+    return Math.max(0, limit - (usage[modelName] || 0));
+  } catch (e) {
+    return undefined;
+  }
+};
 
 export const geminiService = {
   async proposeChanges(
@@ -106,13 +144,14 @@ export const geminiService = {
       4. MEALS:
          - Core: Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
          - Suggestions: Provide 3 specific restaurant names in 'event.suggestions' inside the CORE meal events. If different members dine separately, create separate meal events.
-      5. TRAVEL & ROUTES: Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (Subway/Bus), or 'drive' (Taxi/Uber). Add travel for BOTH core and suggested activities. Create separate travel events for split members if they go to different places. Realistically link travel to the activities they precede.
-      6. STAYS: Every day MUST end with a 'stay' category event, unless it is the final day and the user is traveling home.
+      5. TRAVEL & ROUTES (STRICT): Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (Subway/Bus), or 'drive' (Taxi/Uber). Add travel for EVERY location change, including back-to-back suggested activities. Separate travel for split members is required if they go to different places.
+      6. STAYS & LOGISTICS: Every day MUST end with a 'stay'. If members move hotels (e.g. Carrie moves day 2), explicitly add a 'logistics' or 'stay' event reflecting this change in the itinerary.
       7. NO SKIPPING DAYS: Include every day between start and end dates.
       8. ASSUMPTIONS: List logical assumptions in the 'assumptions' array.
-      9. MEMBER ASSIGNMENT: Assign 'memberIds' strictly as requested.
+      9. MEMBER ASSIGNMENT (CRITICAL): Assign 'memberIds' strictly as requested. Every member, including Pepper (the dog), MUST be assigned to the activities they are attending. Stays should usually include everyone ('everyone' or list of all IDs) unless someone is staying elsewhere. Ensure dog-friendly activities are suggested if Pepper is included.
      10. TITLE FORMAT (STRICT): Use exactly "[Place(s)] [Year]" (e.g., "NYC 2026").
-     11. TRIP END: Stop all activities/meals once the return flight or travel home begins. Do not suggest dinner after a flight that arrives home late.
+     11. TRIP END: Stop all activities/meals once the return flight or travel home begins. 
+     12. PLACES SHORTLIST: Return a 'shortlist' array of objects (name, category, description, location: {lat, lng}) for all suggested or requested locations mentioned in the itinerary. This ensures the Places tab is populated.
     `;
 
     const models = [
@@ -214,7 +253,7 @@ export const geminiService = {
                             }
                           }
                         },
-                        required: ["id", "type", "category", "title", "startTime", "endTime"]
+                        required: ["id", "type", "category", "title", "startTime", "endTime", "location"]
                       }
                     }
                   },
@@ -360,11 +399,24 @@ export const geminiService = {
 
         try {
           const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
-          return JSON.parse(jsonrepair(cleaned)) as GeminiProposal;
+          const parsed = JSON.parse(jsonrepair(cleaned)) as GeminiProposal;
+          
+          // Add model info
+          parsed.modelInfo = { 
+            name: modelName,
+            quotaRemaining: trackUsage(modelName)
+          };
+          
+          return parsed;
         } catch (parseError) {
           console.warn(`Initial JSON parse failed for ${modelName}, attempting repair...`, parseError);
           const repaired = jsonrepair(text);
-          return JSON.parse(repaired) as GeminiProposal;
+          const parsed = JSON.parse(repaired) as GeminiProposal;
+          parsed.modelInfo = { 
+            name: modelName,
+            quotaRemaining: trackUsage(modelName)
+          };
+          return parsed;
         }
       } catch (error: any) {
         console.warn(`Model ${modelName} failed:`, error.message);

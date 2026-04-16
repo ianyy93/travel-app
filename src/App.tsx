@@ -1216,6 +1216,7 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [aiProposal, setAiProposal] = useState<GeminiProposal | null>(null);
   const [rejectedSuggestionIds, setRejectedSuggestionIds] = useState<string[]>([]);
+  const [rejectedAssumptionIdxs, setRejectedAssumptionIdxs] = useState<number[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -1323,15 +1324,15 @@ export default function App() {
     }
   };
 
-  const handleAiAction = async (mode: GenerationMode = 'full') => {
-    if (!aiPrompt.trim() && mode !== 'navigation' && mode !== 'autofill') return;
+  const handleAiAction = async (mode: GenerationMode = 'full', customPrompt?: string) => {
+    if (!aiPrompt.trim() && !customPrompt && mode !== 'navigation' && mode !== 'autofill') return;
     setIsAiLoading(true);
     try {
       const pastTripsSummary = tripsList.map(t => `${t.title} (${t.date})`).join(', ');
       // If we are in list view, we are likely creating a new trip, so pass an empty itinerary
       const contextItinerary = view === 'list' ? [] : itinerary;
       const contextMembers = members.length > 0 ? members : masterTravellers;
-      const finalPrompt = aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
+      const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
       
       console.log('AI Action:', mode, 'Prompt:', finalPrompt);
       const proposal = await geminiService.proposeChanges(
@@ -1351,6 +1352,7 @@ export default function App() {
       
       setAiProposal(proposal);
       setRejectedSuggestionIds([]); // Reset rejections for new proposal
+      setRejectedAssumptionIdxs([]); // Reset assumption rejections for new proposal
       setShowAiAssistant(true); // Ensure panel is open to show proposal
       setAiPrompt('');
     } catch (err) {
@@ -2746,10 +2748,20 @@ export default function App() {
               {aiProposal ? (
                 <div className="space-y-4">
                   <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100">
-                    <h3 className="font-bold text-blue-900 mb-2 flex items-center gap-2">
-                      <Wand2 className="w-4 h-4" />
-                      Proposed Changes
-                    </h3>
+                    <div className="flex justify-between items-start mb-2">
+                       <h3 className="font-bold text-blue-900 flex items-center gap-2">
+                        <Wand2 className="w-4 h-4" />
+                        Proposed Changes
+                      </h3>
+                      {aiProposal.modelInfo && (
+                        <div className="text-right">
+                          <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest">{aiProposal.modelInfo.name.replace('-preview', '')}</p>
+                          {aiProposal.modelInfo.quotaRemaining !== undefined && (
+                            <p className="text-[8px] font-bold text-blue-300">Quota: {aiProposal.modelInfo.quotaRemaining} left today</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <p className="text-sm text-blue-800 mb-4 italic">"{aiProposal.explanation || "I've updated your itinerary based on your request. Review the changes below."}"</p>
                     
                     {aiProposal.assumptions && aiProposal.assumptions.length > 0 && (
@@ -2757,8 +2769,27 @@ export default function App() {
                         <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Assumptions</h4>
                         <ul className="space-y-1">
                           {aiProposal.assumptions.map((a, i) => (
-                            <li key={i} className="group text-xs text-blue-700 flex items-start gap-2">
-                              <span className="mt-1.5 w-1 h-1 bg-blue-400 rounded-full shrink-0" />
+                            <li key={i} className={cn(
+                              "group text-xs flex items-start gap-2 p-1.5 rounded-xl transition-all",
+                              rejectedAssumptionIdxs.includes(i) ? "bg-red-50 text-red-700 opacity-60" : "bg-blue-50/50 text-blue-700"
+                            )}>
+                              <button 
+                                onClick={() => {
+                                  if (rejectedAssumptionIdxs.includes(i)) {
+                                    setRejectedAssumptionIdxs(prev => prev.filter(idx => idx !== i));
+                                  } else {
+                                    setRejectedAssumptionIdxs(prev => [...prev, i]);
+                                  }
+                                }}
+                                className={cn(
+                                  "mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+                                  rejectedAssumptionIdxs.includes(i) 
+                                    ? "bg-red-500 border-red-500 text-white" 
+                                    : "bg-white border-blue-200 text-blue-500"
+                                )}
+                              >
+                                {rejectedAssumptionIdxs.includes(i) ? <X className="w-2.5 h-2.5" /> : <Check className="w-2.5 h-2.5" />}
+                              </button>
                               <span className="flex-1 leading-relaxed">{a}</span>
                               <button 
                                 onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: Assumption "${a}": ` : `Re: Assumption "${a}": `)}
@@ -2770,6 +2801,19 @@ export default function App() {
                             </li>
                           ))}
                         </ul>
+                        {rejectedAssumptionIdxs.length > 0 && (
+                          <button 
+                            onClick={() => {
+                              const rejections = rejectedAssumptionIdxs.map(idx => aiProposal?.assumptions[idx]).join('; ');
+                              const feedback = `REJECT ASSUMPTIONS: ${rejections}. Please rethink the itinerary accordingly.`;
+                              setAiPrompt(prev => prev ? `${prev}\n\n${feedback}` : feedback);
+                              handleAiAction('full', aiPrompt + `\n\n${feedback}`);
+                            }}
+                            className="mt-3 w-full py-2.5 bg-red-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-700 shadow-sm transition-all flex items-center justify-center gap-2"
+                          >
+                            <RefreshCw className="w-3 h-3" /> Update Proposal
+                          </button>
+                        )}
                       </div>
                     )}
 
