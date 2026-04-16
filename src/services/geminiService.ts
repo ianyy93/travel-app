@@ -96,29 +96,20 @@ export const geminiService = {
       MODE: ${mode} (${modeInstruction})
 
       Rules:
-      1. Return JSON matching the schema.
-      2. Every 'activity' MUST have 'location' with 'name', 'lat', 'lng'.
-      3. MANDATORY EXPLANATION: Describe exactly what you changed/added in the 'explanation' field.
-      4. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
-      5. BASELINE vs SUGGESTIONS: Distinguish between the 'Core Itinerary' and 'Optional Suggestions'.
-         - 'Core Itinerary' (NO top-level suggestion): 
-            * Explicitly requested events (e.g. Flight PD 605, Remote Work, Ian @ Conference).
-            * Baseline Meal Placeholders (Breakfast 8AM, Lunch 12PM, Dinner 7PM).
-            * Checkout/Stay events.
-         - 'Optional Suggestions' (MUST have top-level suggestion with 'relatedId'):
-            * AI-added leisure activities not in prompt.
-            * Logistical suggestions like "Transfer to New Hotel".
-            * Specific restaurant recommendations.
-      6. DATE FORMAT: "Month Day" (e.g., "May 14").
-      7. NAVIGATION & TRANSFERS: Add 'travel' events between locations. Proactively suggest "Move to [Hotel Name]" as a 'suggestion' if stay locations change between days.
-      8. MEALS: Always include 3 meal placeholders per day in the 'Core Itinerary'. 
-         - Title: "Breakfast", "Lunch", or "Dinner".
-         - Recommendations: Provide 3 specific restaurant options in the 'event.suggestions' array inside that meal event.
-      9. STRICT PROMPT ADHERENCE: Do NOT add leisure activities that weren't requested. If "Remote Work" is in the prompt, it must be a Core activity for those members.
-     10. TIMES: Every event MUST have 'startTime' and 'endTime' (AM/PM). Use realistic times.
-     11. SHORTLIST: Add places mentioned without a specific time to 'shortlist' ONLY. 
-     12. MEMBERSHIP: Ensure 'memberIds' strictly match the prompt. (e.g. Carrie & Pepper work remote, Ian at Javits).
-     13. NO SKIPPING DAYS: Include every day between start/end dates. Every day must at least have meals and a 'stay' event.
+      1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
+      2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
+      3. CORE vs OPTIONAL (CRITICAL):
+         - 'Core Itinerary': Mandatory events like requested flights, Ian's conference, and baseline meal placeholders (Breakfast, Lunch, Dinner). These do NOT need a top-level suggestion.
+         - 'Optional Suggestions': ANY added activity, logistical move (e.g. "Move to Four Seasons"), or specific restaurant choice.
+         - MANDATORY LINKING: Every 'Optional' event added to the 'itinerary' MUST have a corresponding object in the 'suggestions' array. The suggestion's 'relatedId' MUST match the event's 'id'. This allows the user to approve/reject them.
+      4. MEALS:
+         - Core: Include "Breakfast" (8:00 AM), "Lunch" (12:00 PM), and "Dinner" (7:00 PM) for every day. Leave 'location' field empty for these core placeholders.
+         - Suggestions: For each meal, provide 3 specific restaurant names in the 'event.suggestions' array inside the event. These should be dog-friendly or relevant to the location.
+      5. TRAVEL & ROUTES: Use 'type: travel' for events connecting back-to-back activities at different locations. Use categories 'walk', 'transit', or 'drive'. Factor in 30-60 mins for city travel.
+      6. STAYS: Every day MUST end with a 'stay' category event (typically starting at 9:00 PM).
+      7. NO SKIPPING DAYS: Include every day between start and end dates.
+      8. ASSUMPTIONS: List logical assumptions in the 'assumptions' array.
+      9. MEMBER ASSIGNMENT: Assign 'memberIds' strictly. Ian at conference. Carrie & Pepper working remote (CORE activity).
     `;
 
     try {
