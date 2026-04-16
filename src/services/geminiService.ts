@@ -101,15 +101,16 @@ export const geminiService = {
       3. CORE vs OPTIONAL (CRITICAL):
          - 'Core Itinerary': Mandatory events like requested flights, Ian's conference, and baseline meal placeholders (Breakfast, Lunch, Dinner). These do NOT need a top-level suggestion.
          - 'Optional Suggestions': ANY added activity, logistical move (e.g. "Move to Four Seasons"), or specific restaurant choice.
-         - MANDATORY LINKING: Every 'Optional' event added to the 'itinerary' MUST have a corresponding object in the 'suggestions' array. The suggestion's 'relatedId' MUST match the event's 'id'. This allows the user to approve/reject them.
+         - MANDATORY LINKING & CONSISTENCY: Every 'Optional' event added to the 'itinerary' MUST have a corresponding object in the 'suggestions' array. CONVERSELY, every activity mentioned in your 'explanation' or 'suggestions' MUST have a corresponding event entry in the 'itinerary' JSON.
       4. MEALS:
-         - Core: Include "Breakfast" (8:00 AM), "Lunch" (12:00 PM), and "Dinner" (7:00 PM) for every day. Leave 'location' field empty for these core placeholders.
-         - Suggestions: For each meal, provide 3 specific restaurant names in the 'event.suggestions' array inside the event. These should be dog-friendly or relevant to the location.
-      5. TRAVEL & ROUTES: Use 'type: travel' for events connecting back-to-back activities at different locations. Use categories 'walk', 'transit', or 'drive'. Factor in 30-60 mins for city travel.
-      6. STAYS: Every day MUST end with a 'stay' category event (typically starting at 9:00 PM).
+         - Core: Include "Breakfast", "Lunch", and "Dinner" for every day. Leave 'location' field empty for these core placeholders.
+         - Suggestions: Provide 3 specific restaurant names in the 'event.suggestions' array inside the event.
+      5. TRAVEL & ROUTES: Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (for Subway/Bus), or 'drive' (Taxi/Uber). Factor in 30-60 mins for NYC travel.
+      6. STAYS: Every day MUST end with a 'stay' category event.
       7. NO SKIPPING DAYS: Include every day between start and end dates.
       8. ASSUMPTIONS: List logical assumptions in the 'assumptions' array.
-      9. MEMBER ASSIGNMENT: Assign 'memberIds' strictly. Ian at conference. Carrie & Pepper working remote (CORE activity).
+      9. MEMBER ASSIGNMENT: Assign 'memberIds' strictly as requested.
+     10. TITLE FORMAT (STRICT): Use exactly "[Place(s)] [Year]" (e.g., "NYC 2026"). Do NOT add extra words.
     `;
 
     try {
