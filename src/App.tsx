@@ -1215,12 +1215,8 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [aiProposal, setAiProposal] = useState<GeminiProposal | null>(null);
-  const [sessionPrompt, setSessionPrompt] = useState('');
   const [rejectedSuggestionIds, setRejectedSuggestionIds] = useState<string[]>([]);
   const [rejectedAssumptionIdxs, setRejectedAssumptionIdxs] = useState<number[]>([]);
-  const [rejectedCoreIds, setRejectedCoreIds] = useState<string[]>([]);
-  const [saveToPlacesIds, setSaveToPlacesIds] = useState<string[]>([]);
-  const [selectedSuggestionIds, setSelectedSuggestionIds] = useState<string[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -1336,15 +1332,7 @@ export default function App() {
       // If we are in list view, we are likely creating a new trip, so pass an empty itinerary
       const contextItinerary = view === 'list' ? [] : itinerary;
       const contextMembers = members.length > 0 ? members : masterTravellers;
-      
-      // If customPrompt is provided (regeneration), we should prepend the sessionPrompt to maintain context
-      let finalPrompt = '';
-      if (customPrompt) {
-        finalPrompt = `ORIGINAL REQUEST: ${sessionPrompt}\n\nFEEDBACK/REVISIONS: ${customPrompt}`;
-      } else {
-        finalPrompt = aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
-        setSessionPrompt(finalPrompt); // Store the original prompt for this session
-      }
+      const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
       
       console.log('AI Action:', mode, 'Prompt:', finalPrompt);
       const proposal = await geminiService.proposeChanges(
@@ -1365,9 +1353,6 @@ export default function App() {
       setAiProposal(proposal);
       setRejectedSuggestionIds([]); // Reset rejections for new proposal
       setRejectedAssumptionIdxs([]); // Reset assumption rejections for new proposal
-      setRejectedCoreIds([]); // Reset core rejections for new proposal
-      setSaveToPlacesIds([]); // Reset move to places for new proposal
-      setSelectedSuggestionIds([]); // Reset selected suggestions for new proposal
       setShowAiAssistant(true); // Ensure panel is open to show proposal
       setAiPrompt('');
     } catch (err) {
@@ -1386,60 +1371,29 @@ export default function App() {
       const lastDayDate = aiProposal.itinerary[aiProposal.itinerary.length - 1]?.date || '';
       const inferredDates = firstDayDate && lastDayDate ? `${firstDayDate} - ${lastDayDate}` : '';
 
-      // Filter out rejected suggestions and unrequested core activities from itinerary
+      // Filter out rejected suggestions from itinerary
       const filteredItinerary = aiProposal.itinerary.map(day => ({
         ...day,
         events: day.events.filter(event => {
-          if (rejectedCoreIds.includes(event.id) || saveToPlacesIds.includes(event.id)) {
-            return false;
-          }
           const suggestion = aiProposal.suggestions?.find(s => s.relatedId === event.id);
-          if (suggestion && suggestion.type !== 'food' && rejectedSuggestionIds.includes(suggestion.id)) {
+          if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
             return false;
           }
           return true;
-        }).map(event => {
-          // If a food suggestion was selected for this meal, update its location
-          const selectedFood = aiProposal.suggestions?.find(s => s.relatedId === event.id && s.type === 'food' && selectedSuggestionIds.includes(s.id));
-          if (selectedFood) {
-            return {
-              ...event,
-              location: selectedFood.location,
-              title: selectedFood.text,
-              description: selectedFood.description
-            };
-          }
-          return event;
         })
       }));
 
-      // Add "Save to Places" items to the shortlist
-      const extraShortlistItems = aiProposal.itinerary.flatMap(d => d.events)
-        .filter(e => saveToPlacesIds.includes(e.id))
-        .map(e => ({
-          name: e.title,
-          category: e.category,
-          description: e.description || '',
-          location: e.location || e.destination || e.origin
-        }));
-
       // Filter out generic neighborhoods from shortlist just in case AI pollutes it
-      const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south', 'village', 'square', 'park', 'heights', 'side', 'lower', 'upper'];
-      const filteredAiShortlist = [...(aiProposal.shortlist || []), ...extraShortlistItems].filter(p => {
+      const genericTerms = ['neighborhood', 'area', 'district', 'region', 'downtown', 'midtown', 'uptown', 'west', 'east', 'north', 'south'];
+      const filteredAiShortlist = (aiProposal.shortlist || []).filter(p => {
         const name = p.name?.toLowerCase() || '';
-        const isGeneric = genericTerms.some(term => name.includes(term) && name.split(' ').length <= 1);
-        const isAreaDescription = name.includes('area') || name.includes('neighborhood') || name.includes('district');
-        if (isGeneric || isAreaDescription) return false;
+        const isGeneric = genericTerms.some(term => name.includes(term) && name.split(' ').length <= 2);
+        if (isGeneric) return false;
         
         // Also filter if it's a rejected suggestion
         const suggestion = aiProposal.suggestions?.find(s => s.text.includes(p.name));
-        if (suggestion) {
-          if (suggestion.type === 'food' && !selectedSuggestionIds.includes(suggestion.id)) {
-            return false; // Only add restaurants if selected
-          }
-          if (suggestion.type !== 'food' && rejectedSuggestionIds.includes(suggestion.id)) {
-            return false;
-          }
+        if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
+          return false;
         }
         return true;
       });
@@ -1536,9 +1490,6 @@ export default function App() {
       
       setAiProposal(null);
       setRejectedSuggestionIds([]);
-      setRejectedCoreIds([]);
-      setSaveToPlacesIds([]);
-      setSelectedSuggestionIds([]);
       setShowAiAssistant(false);
     };
 
@@ -2360,9 +2311,11 @@ export default function App() {
       // Handle "Tue Jul 28, 2026" or "Jul 28" or "July 28, 2026"
       const clean = dateStr.includes(',') ? dateStr.split(',')[0].trim() : dateStr.trim();
       
-      // If it looks like "Tue Jul 28", we want "Jul 28" 
+      // If it looks like "Tue Jul 28", we want "Jul 28"
       const parts = clean.split(' ');
-      if (parts.length >= 2) {
+      if (parts.length >= 3) {
+        // Assume format "Day Month Date" or "Month Date Year"
+        // Try to find the month and date
         const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const fullMonthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         
@@ -2370,29 +2323,21 @@ export default function App() {
         let day = '';
         
         for (const p of parts) {
-          const mIdx = monthNames.findIndex(m => p.toLowerCase().startsWith(m.toLowerCase()));
-          const fmIdx = fullMonthNames.findIndex(m => p.toLowerCase().startsWith(m.toLowerCase()));
+          const mIdx = monthNames.findIndex(m => p.startsWith(m));
+          const fmIdx = fullMonthNames.findIndex(m => p.startsWith(m));
           if (mIdx !== -1 || fmIdx !== -1) {
             month = monthNames[mIdx !== -1 ? mIdx : fmIdx];
-          } else if (!isNaN(parseInt(p.replace(/[^0-9]/g, '')))) {
-            day = p.replace(/[^0-9]/g, '');
+          } else if (!isNaN(parseInt(p))) {
+            day = p;
           }
         }
         
         if (month && day) return `${month} ${day}`;
       }
       
-      // If it's pure ISO (YYYY-MM-DD), parse components to avoid timezone shift
-      const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (isoMatch) {
-        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const mIdx = parseInt(isoMatch[2]) - 1;
-        return `${monthNames[mIdx]} ${parseInt(isoMatch[3])}`;
-      }
-      
       const d = new Date(dateStr);
       if (!isNaN(d.getTime())) {
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }
       return dateStr;
     } catch (e) {
@@ -2861,111 +2806,72 @@ export default function App() {
                     )}
 
                     {aiProposal.suggestions && aiProposal.suggestions.length > 0 && (
-                      <div className="space-y-4 mb-4">
-                        {(() => {
-                           const activitySugs = aiProposal.suggestions.filter(s => {
-                             const event = aiProposal.itinerary.flatMap(d => d.events).find(e => e.id === s.relatedId);
-                             return event?.category !== 'food' && s.type !== 'food';
-                           });
-                           const foodSugs = aiProposal.suggestions.filter(s => {
-                             const event = aiProposal.itinerary.flatMap(d => d.events).find(e => e.id === s.relatedId);
-                             return event?.category === 'food' || s.type === 'food';
-                           });
-
-                           return (
-                             <>
-                               {activitySugs.length > 0 && (
-                                 <div>
-                                   <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">New Activity Proposals</h4>
-                                   <div className="space-y-2">
-                                     {activitySugs.map((s) => (
-                                       <div 
-                                         key={s.id} 
-                                         className={cn(
-                                           "p-3 rounded-xl border transition-all flex items-center justify-between gap-3",
-                                           rejectedSuggestionIds.includes(s.id) 
-                                             ? "bg-slate-50 border-slate-100 opacity-60" 
-                                             : "bg-white border-blue-100 shadow-sm"
-                                         )}
-                                       >
-                                         <div className="flex items-center gap-3">
-                                           <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-green-50 text-green-600">
-                                              <MapPin className="w-4 h-4" />
-                                           </div>
-                                           <p className="text-xs font-medium text-slate-700 leading-tight">{s.text}</p>
-                                         </div>
-                                         <div className="flex items-center gap-1">
-                                           <button 
-                                             onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: "${s.text}": ` : `Re: "${s.text}": `)}
-                                             className="p-1 px-2 hover:bg-blue-50 rounded-lg text-blue-400 transition-colors"
-                                           >
-                                             <MessageSquare className="w-3.5 h-3.5" />
-                                           </button>
-                                           <button 
-                                             onClick={() => {
-                                               if (rejectedSuggestionIds.includes(s.id)) {
-                                                 setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
-                                               } else {
-                                                 setRejectedSuggestionIds(prev => [...prev, s.id]);
-                                               }
-                                             }}
-                                             className={cn(
-                                               "w-6 h-6 rounded-full flex items-center justify-center transition-colors shadow-sm",
-                                               rejectedSuggestionIds.includes(s.id)
-                                                 ? "bg-slate-200 text-slate-500"
-                                                 : "bg-blue-600 text-white"
-                                             )}
-                                           >
-                                             {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-3 h-3" /> : <Check className="w-3 h-3" />}
-                                           </button>
-                                         </div>
-                                       </div>
-                                     ))}
-                                   </div>
-                                 </div>
-                               )}
-
-                               {foodSugs.length > 0 && (
-                                 <div>
-                                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Restaurant Suggestions (Opt-in to Places)</h4>
-                                   <div className="flex flex-wrap gap-2">
-                                     {foodSugs.map((s) => (
-                                       <button 
-                                         key={s.id} 
-                                         onClick={() => {
-                                           if (selectedSuggestionIds.includes(s.id)) {
-                                             setSelectedSuggestionIds(prev => prev.filter(id => id !== s.id));
-                                           } else {
-                                             setSelectedSuggestionIds(prev => [...prev, s.id]);
-                                           }
-                                         }}
-                                         className={cn(
-                                           "px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 transition-all",
-                                           selectedSuggestionIds.includes(s.id)
-                                             ? "bg-blue-50 border-blue-200 text-blue-700 shadow-sm"
-                                             : "bg-slate-50 border-slate-100 text-slate-400"
-                                         )}
-                                       >
-                                         <Utensils className="w-2.5 h-2.5" />
-                                         {s.text}
-                                         {selectedSuggestionIds.includes(s.id) ? <Check className="w-2 h-2 ml-0.5" /> : <Plus className="w-2 h-2 ml-0.5" />}
-                                       </button>
-                                     ))}
-                                   </div>
-                                 </div>
-                               )}
-                             </>
-                           );
-                        })()}
+                      <div className="mb-4">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Optional Suggestions</h4>
+                        <div className="space-y-2">
+                          {aiProposal.suggestions.map((s) => (
+                            <div 
+                              key={s.id} 
+                              className={cn(
+                                "p-3 rounded-xl border transition-all flex items-center justify-between gap-3",
+                                rejectedSuggestionIds.includes(s.id) 
+                                  ? "bg-slate-50 border-slate-100 opacity-60" 
+                                  : "bg-white border-blue-100 shadow-sm"
+                              )}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className={cn(
+                                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                                  s.type === 'activity' ? "bg-green-50 text-green-600" :
+                                  s.type === 'food' ? "bg-orange-50 text-orange-600" :
+                                  "bg-blue-50 text-blue-600"
+                                )}>
+                                  {s.type === 'activity' ? <MapPin className="w-4 h-4" /> :
+                                   s.type === 'food' ? <Utensils className="w-4 h-4" /> :
+                                   <Sparkles className="w-4 h-4" />}
+                                </div>
+                                <p className="text-xs font-medium text-slate-700 leading-tight">{s.text}</p>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <button 
+                                  onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: Suggestion "${s.text}": ` : `Re: Suggestion "${s.text}": `)}
+                                  className="p-1 px-2 hover:bg-blue-50 rounded-lg text-blue-400 transition-colors"
+                                  title="Add feedback for this suggestion"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    if (rejectedSuggestionIds.includes(s.id)) {
+                                      setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
+                                    } else {
+                                      setRejectedSuggestionIds(prev => [...prev, s.id]);
+                                    }
+                                  }}
+                                  className={cn(
+                                    "w-6 h-6 rounded-full flex items-center justify-center transition-colors shadow-sm",
+                                    rejectedSuggestionIds.includes(s.id)
+                                      ? "bg-slate-200 text-slate-500"
+                                      : "bg-blue-600 text-white"
+                                  )}
+                                  title={rejectedSuggestionIds.includes(s.id) ? "Approve suggestion" : "Reject suggestion"}
+                                >
+                                  {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-3 h-3" /> : <Check className="w-3 h-3" />}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
                     {(() => {
                       const coreEvents = aiProposal.itinerary
                         .flatMap(d => d.events)
-                        .filter(e => !aiProposal.suggestions?.some(s => s.relatedId === e.id && s.type !== 'food'));
+                        .filter(e => !aiProposal.suggestions?.some(s => s.relatedId === e.id));
                       
                       const nonMealCore = coreEvents.filter(e => 
+                        e.category !== 'food' && 
                         e.category !== 'stay' && 
                         e.category !== 'travel' && 
                         e.category !== 'walk' && 
@@ -2976,99 +2882,16 @@ export default function App() {
                       if (nonMealCore.length > 0) {
                         return (
                           <div className="mb-4">
-                            <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Planned Activities & Meals</h4>
-                            <div className="space-y-2">
-                              {nonMealCore.map((e, idx) => {
-                                const relatedFoodSugs = aiProposal.suggestions?.filter(s => s.relatedId === e.id && s.type === 'food') || [];
-                                return (
-                                  <div 
-                                    key={idx} 
-                                    className={cn(
-                                      "p-2 border rounded-xl flex flex-col gap-2 shadow-sm transition-all",
-                                      rejectedCoreIds.includes(e.id) || saveToPlacesIds.includes(e.id)
-                                        ? "bg-slate-50 border-slate-100 opacity-60"
-                                        : "bg-white border-blue-100"
-                                    )}
-                                  >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <div className="flex items-center gap-2 min-w-0">
-                                        {e.category === 'flight' || e.category === 'logistics' ? <Plane className="w-3 h-3 text-blue-500" /> : 
-                                         e.category === 'food' ? <Utensils className="w-3 h-3 text-rose-500" /> :
-                                         e.category === 'work' ? <Briefcase className="w-3 h-3 text-blue-500" /> :
-                                         <MapPin className="w-3 h-3 text-emerald-500" />}
-                                        <span className={cn(
-                                          "text-[10px] font-bold truncate",
-                                          rejectedCoreIds.includes(e.id) || saveToPlacesIds.includes(e.id) ? "text-slate-400 line-through" : "text-slate-700"
-                                        )}>
-                                          {e.title}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-0.5">
-                                        <button 
-                                          onClick={() => {
-                                            if (saveToPlacesIds.includes(e.id)) {
-                                              setSaveToPlacesIds(prev => prev.filter(id => id !== e.id));
-                                            } else {
-                                              setSaveToPlacesIds(prev => [...prev, e.id]);
-                                              setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
-                                            }
-                                          }}
-                                          className={cn(
-                                            "p-1 hover:bg-slate-100 rounded transition-colors",
-                                            saveToPlacesIds.includes(e.id) ? "text-blue-600" : "text-slate-400"
-                                          )}
-                                          title="Keep in Shortlist only (not scheduled)"
-                                        >
-                                          <ShoppingBag className="w-3 h-3" />
-                                        </button>
-                                        <button 
-                                          onClick={() => {
-                                            if (rejectedCoreIds.includes(e.id)) {
-                                              setRejectedCoreIds(prev => prev.filter(id => id !== e.id));
-                                            } else {
-                                              setRejectedCoreIds(prev => [...prev, e.id]);
-                                              setSaveToPlacesIds(prev => prev.filter(id => id !== e.id));
-                                            }
-                                          }}
-                                          className={cn(
-                                            "p-1 hover:bg-slate-100 rounded transition-colors",
-                                            rejectedCoreIds.includes(e.id) ? "text-red-600" : "text-slate-400"
-                                          )}
-                                          title="Reject activity entirely"
-                                        >
-                                          {rejectedCoreIds.includes(e.id) ? <Plus className="w-3 h-3" /> : <X className="w-3 h-3" />}
-                                        </button>
-                                      </div>
-                                    </div>
-
-                                    {relatedFoodSugs.length > 0 && (
-                                      <div className="flex flex-wrap gap-1 border-t pt-2 mt-1">
-                                        {relatedFoodSugs.map(s => (
-                                          <button
-                                            key={s.id}
-                                            onClick={() => {
-                                              if (selectedSuggestionIds.includes(s.id)) {
-                                                setSelectedSuggestionIds(prev => prev.filter(id => id !== s.id));
-                                              } else {
-                                                setSelectedSuggestionIds(prev => [...prev, s.id]);
-                                              }
-                                            }}
-                                            className={cn(
-                                              "px-1.5 py-0.5 rounded text-[8px] font-black uppercase transition-all flex items-center gap-1",
-                                              selectedSuggestionIds.includes(s.id)
-                                                ? "bg-blue-600 text-white shadow-sm"
-                                                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                                            )}
-                                          >
-                                            {s.text}
-                                            {selectedSuggestionIds.includes(s.id) && <Check className="w-2 h-2" />}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
+                            <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Confirmed Additions</h4>
+                            <div className="flex flex-wrap gap-2">
+                              {nonMealCore.map((e, idx) => (
+                                <div key={idx} className="px-2 py-1 bg-white border border-blue-100 rounded-lg text-[10px] font-bold text-blue-700 flex items-center gap-1 shadow-sm">
+                                  {e.category === 'flight' || e.category === 'logistics' ? <Plane className="w-2.5 h-2.5" /> : 
+                                   e.category === 'work' ? <Briefcase className="w-2.5 h-2.5" /> :
+                                   <MapPin className="w-2.5 h-2.5" />}
+                                  {e.title}
+                                </div>
+                              ))}
                             </div>
                           </div>
                         );
@@ -3078,39 +2901,24 @@ export default function App() {
 
                     {/* Consistently handled below */}
 
-                    {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0 || rejectedCoreIds.length > 0 || saveToPlacesIds.length > 0) && (
+                    {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0) && (
                       <div className="mb-4 p-4 bg-red-50 rounded-2xl border border-red-100 shadow-sm text-center">
                         <button 
-                          disabled={isAiLoading}
                           onClick={() => {
                             const assumptionRejections = rejectedAssumptionIdxs.map(idx => aiProposal?.assumptions[idx]).join('; ');
                             const suggestionRejections = rejectedSuggestionIds.map(id => aiProposal?.suggestions?.find(s => s.id === id)?.text).filter(Boolean).join('; ');
-                            const coreRejections = rejectedCoreIds.map(id => {
-                              const event = aiProposal.itinerary.flatMap(d => d.events).find(ev => ev.id === id);
-                              return event?.title;
-                            }).filter(Boolean).join('; ');
-                            const shortlistOnly = saveToPlacesIds.map(id => {
-                              const event = aiProposal.itinerary.flatMap(d => d.events).find(ev => ev.id === id);
-                              return event?.title;
-                            }).filter(Boolean).join('; ');
                             
                             let feedback = '';
                             if (assumptionRejections) feedback += `REJECT ASSUMPTIONS: ${assumptionRejections}. `;
                             if (suggestionRejections) feedback += `REJECT SUGGESTIONS: ${suggestionRejections}. `;
-                            if (coreRejections) feedback += `REJECT PLANNED ACTIVITIES (Remove entirely): ${coreRejections}. `;
-                            if (shortlistOnly) feedback += `MOVE TO PLACES/SHORTLIST (Don't schedule on calendar): ${shortlistOnly}. `;
                             feedback += `Please rethink the itinerary and provide alternatives or adjustments.`;
                             
                             setAiPrompt(prev => prev ? `${prev}\n\n${feedback}` : feedback);
                             handleAiAction('full', (aiPrompt ? aiPrompt + '\n\n' : '') + feedback);
                           }}
-                          className={cn(
-                            "w-full py-3 text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 active:scale-95",
-                            isAiLoading ? "bg-slate-400 cursor-not-allowed" : "bg-red-600 hover:bg-red-700 shadow-red-200"
-                          )}
+                          className="w-full py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-700 shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-2 active:scale-95"
                         >
-                          {isAiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                          {isAiLoading ? "Rethinking..." : "Regenerate Proposal with Feedback"}
+                          <RefreshCw className="w-3.5 h-3.5" /> Regenerate Proposal with Feedback
                         </button>
                       </div>
                     )}
