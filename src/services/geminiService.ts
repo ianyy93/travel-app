@@ -1,13 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DayPlan, TripMember } from "../constants";
 import { jsonrepair } from "jsonrepair";
-import firebaseConfig from "../../firebase-applet-config.json";
 
 const GEMINI_KEY =
   import.meta.env.VITE_GEMINI_API_KEY ||
   process.env.GEMINI_API_KEY;
 
-// Log which key source is being used (obfuscated for safety)
 console.log('Gemini initialized with key source:', 
   import.meta.env.VITE_GEMINI_API_KEY ? 'Cloudflare Build Var' : 
   process.env.GEMINI_API_KEY ? 'AI Studio Secret' : 'NONE - Key Missing'
@@ -23,7 +21,7 @@ export interface GeminiSuggestion {
   id: string;
   text: string;
   type: 'activity' | 'flight' | 'stay' | 'other';
-  relatedId?: string; // ID of the event in the proposed itinerary if it's an addition
+  relatedId?: string;
 }
 
 export interface GeminiProposal {
@@ -38,6 +36,7 @@ export interface GeminiProposal {
   rentalInfo?: any;
   stays?: any[];
   restaurants?: any[];
+  experiences?: any[];
   members?: TripMember[];
   modelInfo?: {
     name: string;
@@ -61,21 +60,8 @@ const trackUsage = (modelName: string) => {
     const usage = JSON.parse(localStorage.getItem(key) || '{}');
     usage[modelName] = (usage[modelName] || 0) + 1;
     localStorage.setItem(key, JSON.stringify(usage));
-    
     const limit = QUOTA_LIMITS[modelName] || 20;
     return Math.max(0, limit - usage[modelName]);
-  } catch (e) {
-    return undefined;
-  }
-};
-
-const getRemainingQuota = (modelName: string) => {
-  try {
-    const today = new Date().toISOString().split('T')[0];
-    const key = `gemini_usage_${today}`;
-    const usage = JSON.parse(localStorage.getItem(key) || '{}');
-    const limit = QUOTA_LIMITS[modelName] || 20;
-    return Math.max(0, limit - (usage[modelName] || 0));
   } catch (e) {
     return undefined;
   }
@@ -105,7 +91,6 @@ export const geminiService = {
       userPrompt.toLowerCase().includes('plan a trip') ||
       userPrompt.toLowerCase().includes('create a trip');
 
-    // Truncate current itinerary if it's too large to avoid prompt bloat
     const contextItinerary = currentItinerary.length > 31 ? currentItinerary.slice(0, 31) : currentItinerary;
 
     let modeInstruction = '';
@@ -139,22 +124,32 @@ export const geminiService = {
       Rules:
       1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
-      3. CORE vs OPTIONAL (CRITICAL):
-         - ONLY schedule on the calendar what the user explicitly mentions in their prompt. These MUST have "status": "confirmed".
-         - Everything else you think would be nice goes in the top-level 'suggestions' array ONLY.
-         - For vaguely requested time blocks or placeholder activities, add an event with "status": "suggestion", and MUST provide 3-5 options inside its 'suggestions' array. NEVER add a suggestion directly to the itinerary as a confirmed event!
+      3. CORE vs OPTIONAL (ABSOLUTE RULE - DO NOT BREAK):
+         - An event in the itinerary is CONFIRMED ("status": "confirmed") ONLY if the user's prompt EXPLICITLY names it by activity or place name.
+         - If you think an activity is nice but the user did NOT explicitly request it by name, you MUST NOT place it in the itinerary as confirmed. Put it in the ROOT-level 'suggestions' array instead.
+         - For unnamed time blocks (e.g., "morning", "afternoon free time"), add a placeholder event with "status": "suggestion" and populate its own 'suggestions' array with 3-5 named options. NEVER pre-select one as the event's location.
+         - WRONG example: User says "Plan a 3-day Paris trip" and you add confirmed "Visit Eiffel Tower", "Louvre Museum" - user never asked for these.
+         - RIGHT example: User says "Plan a 3-day Paris trip" and you add "Morning Activity" placeholder (status: "suggestion", suggestions: [{Eiffel Tower}, {Louvre}, ...]).
+         - RIGHT example: User says "I want to visit the Eiffel Tower on Day 1" and you add confirmed "Visit Eiffel Tower" on Day 1.
       4. MEALS (MANDATORY):
-         - Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
+         - Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave the 'location' field empty for meal placeholders.
          - These must have "status": "pending-meal". You MUST provide 3-5 specific restaurant options inside the event's 'suggestions' array.
          - If a meal is explicitly requested by the user, set "status": "confirmed".
       5. TRAVEL & ROUTES (STRICT): Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (Subway/Bus), or 'drive' (Taxi/Uber). Add travel for EVERY location change, including back-to-back suggested activities. Separate travel for split members is required if they go to different places.
-      6. STAYS & LOGISTICS: Every day MUST end with a 'stay'. If members move hotels, explicitly add a 'logistics' or 'stay' event reflecting this change in the itinerary.
-      7. FULL DATE RANGE: Include EVERY single day mentioned in the prompt from start to end. Never end the itinerary early; including travel days.
+      6. MANDATORY DAY-ENDING STAY (CRITICAL - NEVER SKIP THIS):
+         - Every single day in the itinerary MUST have a 'stay' event as the ABSOLUTE LAST event of that day.
+         - The stay MUST have "status": "confirmed", "category": "stay", and a specific named location with coordinates.
+         - Even check-out days must still end with a stay pointing to where the travellers sleep that night.
+         - If members move to a new hotel mid-trip, the new hotel becomes the ending stay for that day.
+         - The ONLY exception is the final departure day when the return flight is literally the last event and travellers are flying home that night.
+         - WRONG: Last event of Day 3 is "Dinner at Restaurant X" with no stay after it.
+         - RIGHT: Last event of Day 3 is "Stay: Grand Hyatt Tokyo" (category: "stay", status: "confirmed").
+      7. FULL DATE RANGE: Include EVERY single day mentioned in the prompt from start to end. Never end the itinerary early; include all travel days.
       8. ASSUMPTIONS: List logical assumptions in the 'assumptions' array (e.g. "Assuming everyone stays together at the hotel").
       9. MEMBER ASSIGNMENT (CRITICAL): Assign 'memberIds' strictly as requested. Every member, including pets if mentioned, MUST be assigned to the activities they are attending. For days where members split, ensure events identify who is attending what. Stays and shared meals should usually include 'everyone' unless specified.
      10. TITLE FORMAT (STRICT): Trip title MUST follow this exact format: "[Primary Destination(s)] [Year]" (e.g., "Tokyo 2026", "NYC & Boston 2026"). Never use words like "Adventure", "Journey", "Trip", "Itinerary", "Arrival", "New". List up to 3 cities separated by " & ". Always include the 4-digit year.
      11. TRIP END: Stop all activities/meals once the return flight or final travel home begins. 
-     12. PLACES SHORTLIST: Return a 'shortlist' array of objects (name, category, description, location: {lat, lng}) for all suggested or requested locations mentioned in the itinerary. This ensures the Places tab is populated.
+     12. PLACES SHORTLIST: Return a 'shortlist' array of objects (name, category, description, location: {lat, lng}) for all suggested or requested locations mentioned in the itinerary.
      13. RESERVATIONS & BOOKINGS: If the user's prompt contains flight numbers, hotels, or restaurants already booked, populate the 'flightInfo', 'stays', 'restaurants', or 'experiences' root fields in the JSON response.
     `;
 
@@ -395,12 +390,10 @@ export const geminiService = {
       try {
         const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
         const parsed = JSON.parse(jsonrepair(cleaned)) as GeminiProposal;
-        
         parsed.modelInfo = { 
           name: model,
           quotaRemaining: trackUsage(model)
         };
-        
         return parsed;
       } catch (parseError) {
         console.warn(`Initial JSON parse failed for ${model}, attempting repair...`, parseError);
@@ -417,6 +410,7 @@ export const geminiService = {
       throw error;
     }
   },
+
   async refineSuggestions(
     event: any,
     refinePrompt: string

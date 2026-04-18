@@ -72,6 +72,7 @@ import {
 } from './constants';
 import { getAppleMapsUrl, getGoogleMapsUrl, getDayRouteUrl } from './utils/mapUtils';
 import { sanitizeForFirestore } from './utils/sanitizeForFirestore';
+import { expandMembers } from './utils/memberUtils';
 import { cn, parseItineraryDate, parseTime, toMinutes } from './lib/utils';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
@@ -1764,18 +1765,43 @@ export default function App() {
     // Wipe and recreate travel events that connect the non-travel events for the day
     const travelEvents: TripEvent[] = [];
     const sortedActivities = [...nonTravelEvents].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
-    const lastEventPerMember: Record<string, TripEvent> = {};
+    const lastEventPerMember: Record<string, TripEvent & { isCrossDay?: boolean }> = {};
 
-    // Only consider confirmed, unhidden events for routing
-    const routableActivities = sortedActivities.filter(e => !e.hidden && e.status === 'confirmed');
+    const isRoutableEvent = (e: TripEvent) =>
+      !e.hidden && !!e.location?.lat && !!e.location?.lng &&
+      (e.status === 'confirmed' ||
+        ((e.status === 'pending-meal' || e.status === 'suggestion') &&
+          e.location.lat !== 0 && e.location.lng !== 0));
+
+    if (dayIdx > 0) {
+      let prevDayIdx = dayIdx - 1;
+      while (prevDayIdx >= 0) {
+        const prevDayEvents = [...newItin[prevDayIdx].events].sort((a, b) => toMinutes(b.startTime) - toMinutes(a.startTime));
+        const prevDayRoutable = prevDayEvents.filter(isRoutableEvent);
+        
+        if (prevDayRoutable.length > 0) {
+          prevDayRoutable.forEach(e => {
+            const mIds = expandMembers(e.memberIds, masterTravellers);
+            mIds.forEach(mid => {
+              if (!lastEventPerMember[mid]) {
+                lastEventPerMember[mid] = { ...e, isCrossDay: true };
+              }
+            });
+          });
+          if (Object.keys(lastEventPerMember).length > 0) {
+            break;
+          }
+        }
+        prevDayIdx--;
+      }
+    }
+
+    const routableActivities = sortedActivities.filter(isRoutableEvent);
 
     routableActivities.forEach(current => {
       if (!current.location || !current.location.lat || !current.location.lng) return;
 
-      let currentMemberIds = current.memberIds || [];
-      if (currentMemberIds.length === 0 || currentMemberIds.includes('everyone')) {
-        currentMemberIds = masterTravellers.map(m => m.id);
-      }
+      const currentMemberIds = expandMembers(current.memberIds, masterTravellers);
 
       currentMemberIds.forEach(mid => {
         const prev = lastEventPerMember[mid];
@@ -1790,6 +1816,9 @@ export default function App() {
 
           if (isDifferentPlace) {
             let startTime = prev.endTime || prev.startTime;
+            if (prev.isCrossDay) {
+              startTime = "07:30 AM";
+            }
             const endTime = current.startTime;
             
             // Try to find if user customized an existing travel segment for these places
@@ -1895,10 +1924,7 @@ export default function App() {
         if (!current.location || !current.location.lat || !current.location.lng) return;
 
         // Get actual member IDs (expand 'everyone' if needed)
-        let currentMemberIds = current.memberIds || [];
-        if (currentMemberIds.length === 0 || currentMemberIds.includes('everyone')) {
-          currentMemberIds = masterTravellers.map(m => m.id);
-        }
+        const currentMemberIds = expandMembers(current.memberIds, masterTravellers);
 
         currentMemberIds.forEach(mid => {
           const prev = lastEventPerMember[mid];
@@ -2498,7 +2524,7 @@ export default function App() {
         {/* Member Initials - Top Right Inside */}
         {(!isGrouped || tabId === 'everyone') && event.memberIds && event.memberIds.length > 0 && (
           <div className="absolute top-4 right-4 flex -space-x-1.5 z-20">
-            {(event.memberIds.includes('everyone') ? masterTravellers.map(m => m.id) : event.memberIds).map(mid => {
+            {expandMembers(event.memberIds, masterTravellers).map(mid => {
               const member = masterTravellers.find(m => m.id === mid);
               if (!member) return null;
               return (
@@ -3699,17 +3725,15 @@ export default function App() {
                                               // Get all unique members involved in this group
                                               const involvedMemberIds = new Set<string>();
                                               group.forEach(event => {
-                                                if (event.memberIds && event.memberIds.length > 0) {
-                                                  event.memberIds.forEach(id => {
-                                                    if (id !== 'everyone') involvedMemberIds.add(id);
-                                                  });
-                                                }
+                                                const eventMembers = expandMembers(event.memberIds, masterTravellers);
+                                                eventMembers.forEach(id => {
+                                                  involvedMemberIds.add(id);
+                                                });
                                               });
 
                                               // Check if all events in the group are shared by all involved members
                                               const allEventsShared = group.every(event => {
-                                                const eventMembers = event.memberIds || [];
-                                                if (eventMembers.length === 0 || eventMembers.includes('everyone')) return true;
+                                                const eventMembers = expandMembers(event.memberIds, masterTravellers);
                                                 return Array.from(involvedMemberIds).every(id => eventMembers.includes(id));
                                               });
 
@@ -3741,12 +3765,10 @@ export default function App() {
                                               const memberGroups: { tabId: string, memberIds: string[], events: TripEvent[] }[] = [];
                                               
                                               sortedMemberIds.forEach(mid => {
-                                                const memberEvents = group.filter(e => 
-                                                  !e.memberIds || 
-                                                  e.memberIds.length === 0 || 
-                                                  e.memberIds.includes('everyone') || 
-                                                  e.memberIds.includes(mid)
-                                                );
+                                                const memberEvents = group.filter(e => {
+                                                  const eventMembers = expandMembers(e.memberIds, masterTravellers);
+                                                  return eventMembers.includes(mid);
+                                                });
                                                 if (memberEvents.length === 0) return;
 
                                                 const existingGroup = memberGroups.find(mg => {
@@ -3764,8 +3786,8 @@ export default function App() {
 
                                               // 'Everyone' events (events shared by all involved members)
                                               const sharedEvents = group.filter(e => {
-                                                if (!e.memberIds || e.memberIds.length === 0 || e.memberIds.includes('everyone')) return true;
-                                                return Array.from(involvedMemberIds).every(id => e.memberIds.includes(id));
+                                                const eventMembers = expandMembers(e.memberIds, masterTravellers);
+                                                return Array.from(involvedMemberIds).every(id => eventMembers.includes(id));
                                               });
 
                                               // Add 'everyone' tab only if there are shared events
