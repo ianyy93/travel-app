@@ -70,7 +70,9 @@ import {
   Location,
   TripMember
 } from './constants';
-import { cn, parseItineraryDate } from './lib/utils';
+import { getAppleMapsUrl, getGoogleMapsUrl, getDayRouteUrl } from './utils/mapUtils';
+import { sanitizeForFirestore } from './utils/sanitizeForFirestore';
+import { cn, parseItineraryDate, parseTime, toMinutes } from './lib/utils';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { 
@@ -139,53 +141,6 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 // --- Components ---
-
-const getAppleMapsUrl = (loc: Location) => 
-  `https://maps.apple.com/?q=${encodeURIComponent(loc.name)}&ll=${loc.lat},${loc.lng}&t=m`;
-
-const getGoogleMapsUrl = (loc: Location) => 
-  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`;
-
-const getDayRouteUrl = (events: TripEvent[], provider: 'apple' | 'google') => {
-  // Collect all unique locations from non-hidden activities (excluding flights)
-  // We ignore travel origin/destination to ensure consistency with the activities they connect
-  const locations = events
-    .filter(e => e.type === 'activity' && e.category !== 'flight' && !e.hidden)
-    .map(e => e.location)
-    .filter((loc): loc is Location => !!loc);
-
-  if (locations.length < 2) return null;
-  
-  // Remove sequential duplicates
-  const uniquePoints: Location[] = [];
-  locations.forEach((loc) => {
-    if (uniquePoints.length === 0 || 
-        uniquePoints[uniquePoints.length - 1].lat !== loc.lat || 
-        uniquePoints[uniquePoints.length - 1].lng !== loc.lng) {
-      uniquePoints.push(loc);
-    }
-  });
-
-  if (uniquePoints.length < 2) return null;
-
-  const origin = uniquePoints[0];
-  const destination = uniquePoints[uniquePoints.length - 1];
-  const waypoints = uniquePoints.slice(1, -1);
-
-  if (provider === 'apple') {
-    // Using specific names and coordinate hinting for Apple Maps
-    const saddr = encodeURIComponent(origin.name);
-    const daddr = encodeURIComponent(destination.name);
-    let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${destination.lat},${destination.lng}&dirflg=d`;
-    if (waypoints.length > 0) {
-      url += `&to=${waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
-    }
-    return url;
-  } else {
-    const waypointsStr = waypoints.map(w => encodeURIComponent(w.name)).join('|');
-    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.name)}&destination=${encodeURIComponent(destination.name)}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=driving`;
-  }
-};
 
 // Helper to update map view when center changes
 const ChangeView = ({ center, zoom }: { center: [number, number], zoom: number }) => {
@@ -788,19 +743,19 @@ const PlacesView = ({
     itinerary.forEach((day, dayIdx) => {
       if (!day || !day.events) return;
       day.events.forEach(event => {
-        // Rule #3: Skip meal suggestion tiles without selection
-        // A suggestion tile is one with suggestions but no specific location (or generic location)
+        // Skip suggestion events entirely
+        if (event.status === 'suggestion') return;
+
+        // Skip logistics keywords unless manually set
+        if (isLogistics(event.location?.name, event.category) && !event.manualCategory && event.status !== 'confirmed') return;
+
+        // Skip generic locations unless manually overridden
         const lowerLoc = event.location?.name.toLowerCase() || '';
         const isGeneric = event.location && (
           (lowerLoc.includes(' area') || lowerLoc.includes(' neighborhood')) ||
-          (lowerLoc.split(',').length <= 2 && /\d{5}/.test(lowerLoc)) // Generic if it's just "City, ST Zip"
+          (lowerLoc.split(',').length <= 2 && /\d{5}/.test(lowerLoc))
         );
-        const isUnselectedSuggestion = event.suggestions && event.suggestions.length > 0 && (!event.location || (isGeneric && !event.manualCategory));
-        
-        if (isUnselectedSuggestion) return;
-
-        // Skip generic locations unless manually overridden
-        if (event.location && isGeneric && !event.manualCategory) return;
+        if (event.location && isGeneric && !event.manualCategory && event.status !== 'confirmed') return;
         
         if (event.location) {
           let cat = 'attraction'; // Rule #6: Default
@@ -1223,6 +1178,7 @@ export default function App() {
   const [view, setView] = useState<'itinerary' | 'list' | 'travellers'>('list');
   const [lastTripView, setLastTripView] = useState<'itinerary' | 'list'>('list');
   const [currentTripId, setCurrentTripId] = useState<string>('main');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [shortlist, setShortlist] = useState<any[]>([]);
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [expandedTrips, setExpandedTrips] = useState<Set<string>>(new Set());
@@ -1230,7 +1186,7 @@ export default function App() {
   const [tripTitle, setTripTitle] = useState('');
   const [isLoadingTrip, setIsLoadingTrip] = useState(true);
   const [tripDates, setTripDates] = useState('');
-  const [activeGroupIndices, setActiveGroupIndices] = useState<Record<string, number>>({});
+  const [activeGroupTabs, setActiveGroupTabs] = useState<Record<string, string>>({});
   const [refinePrompt, setRefinePrompt] = useState('');
   const [isRefining, setIsRefining] = useState<string | null>(null);
   const [flightInfo, setFlightInfo] = useState<any>(null);
@@ -1250,7 +1206,6 @@ export default function App() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiAssistant, setShowAiAssistant] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
-  const [activeColumnIdx, setActiveColumnIdx] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [weatherData, setWeatherData] = useState<Record<number, WeatherInfo>>({});
 
@@ -1569,21 +1524,6 @@ export default function App() {
       setShowAiAssistant(false);
     };
 
-  // Helper to remove undefined values for Firestore
-  const sanitizeForFirestore = (obj: any): any => {
-    if (Array.isArray(obj)) {
-      return obj.map(sanitizeForFirestore);
-    } else if (obj !== null && typeof obj === 'object') {
-      return Object.entries(obj).reduce((acc: any, [key, value]) => {
-        if (value !== undefined) {
-          acc[key] = sanitizeForFirestore(value);
-        }
-        return acc;
-      }, {});
-    }
-    return obj;
-  };
-
   const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string, isAutoSync = false, currentShortlist?: any[], tripIdOverride?: string, currentFlightInfo?: any, currentRentalInfo?: any, currentStays?: any[], currentRestaurants?: any[], currentExperiences?: any[], currentMembers?: TripMember[]) => {
     if (!auth.currentUser) return;
     if (!isAdmin) {
@@ -1652,7 +1592,7 @@ export default function App() {
   };
 
   const handleSelectSuggestion = (dayIdx: number, eventId: string, suggestion: Location) => {
-    const newItinerary = [...itinerary];
+    let newItinerary = [...itinerary];
     const day = newItinerary[dayIdx];
     if (!day) return;
 
@@ -1682,40 +1622,11 @@ export default function App() {
       return event;
     });
 
-    // Rebuild navigation for this day
-    const finalEvents: TripEvent[] = [];
-    const baseEvents = newEvents.filter(e => e.type !== 'travel');
+    newItinerary[dayIdx] = { ...day, events: newEvents };
     
-    // Determine travel mode
-    const travelMode = hasRentalInfo ? 'drive' : 'transit';
-    const travelTitle = hasRentalInfo ? 'Drive' : 'Transit';
-
-    for (let i = 0; i < baseEvents.length; i++) {
-      const current = baseEvents[i];
-      finalEvents.push(current);
-      
-      const next = baseEvents[i+1];
-      if (next && !current.hidden && !next.hidden) {
-        const currentLoc = current.location;
-        const nextLoc = next.location;
-        
-        if (currentLoc && nextLoc && (currentLoc.lat !== nextLoc.lat || currentLoc.lng !== nextLoc.lng)) {
-          finalEvents.push({
-            id: `nav-${current.id}-${next.id}`,
-            type: 'travel',
-            category: travelMode,
-            title: `${travelTitle} to ${nextLoc.name}`,
-            origin: currentLoc,
-            destination: nextLoc,
-            startTime: current.endTime || current.startTime,
-            endTime: next.startTime,
-            memberIds: current.memberIds // Keep members consistent
-          });
-        }
-      }
-    }
-
-    newItinerary[dayIdx] = { ...day, events: finalEvents };
+    // Rebuild navigation for this day using the unified routing function
+    newItinerary = recalculateRoutesAroundEvent(dayIdx, eventId, newItinerary);
+    
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
   };
@@ -1836,6 +1747,103 @@ export default function App() {
     }
     
     return false;
+  };
+
+  const recalculateRoutesAroundEvent = (dayIdx: number, eventId: string, inputItin: DayPlan[]) => {
+    const defaultMode = hasRentalInfo ? 'drive' : 'transit';
+    const defaultTitle = hasRentalInfo ? 'Drive' : 'Transit';
+
+    const newItin = [...inputItin];
+    const day = { ...newItin[dayIdx] };
+    
+    // We just recalculate all routes for the specific day to ensure absolute consistency
+    // across all members, handling edge cases of multiple events hiding/showing.
+    const nonTravelEvents = day.events.filter(e => e.type !== 'travel');
+    const existingTravelEvents = day.events.filter(e => e.type === 'travel');
+    
+    // Wipe and recreate travel events that connect the non-travel events for the day
+    const travelEvents: TripEvent[] = [];
+    const sortedActivities = [...nonTravelEvents].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
+    const lastEventPerMember: Record<string, TripEvent> = {};
+
+    // Only consider confirmed, unhidden events for routing
+    const routableActivities = sortedActivities.filter(e => !e.hidden && e.status === 'confirmed');
+
+    routableActivities.forEach(current => {
+      if (!current.location || !current.location.lat || !current.location.lng) return;
+
+      let currentMemberIds = current.memberIds || [];
+      if (currentMemberIds.length === 0 || currentMemberIds.includes('everyone')) {
+        currentMemberIds = masterTravellers.map(m => m.id);
+      }
+
+      currentMemberIds.forEach(mid => {
+        const prev = lastEventPerMember[mid];
+        if (prev && prev.location) {
+          const prevLoc = prev.location;
+          const currLoc = current.location!;
+
+          const isDifferentPlace = 
+            Math.abs(prevLoc.lat - currLoc.lat) > 0.0001 || 
+            Math.abs(prevLoc.lng - currLoc.lng) > 0.0001 || 
+            prevLoc.name.toLowerCase() !== currLoc.name.toLowerCase();
+
+          if (isDifferentPlace) {
+            let startTime = prev.endTime || prev.startTime;
+            const endTime = current.startTime;
+            
+            // Try to find if user customized an existing travel segment for these places
+            const existingNav = existingTravelEvents.find(t => 
+              (t.origin?.name === prevLoc.name || t.destination?.name === currLoc.name)
+            );
+
+            // Re-use or Create
+            let navEvent: TripEvent;
+            if (existingNav) {
+              navEvent = { ...existingNav, startTime, endTime };
+            } else {
+              navEvent = {
+                id: `nav-${prev.id}-${current.id}-${Date.now()}`,
+                type: 'travel',
+                category: defaultMode,
+                title: `${defaultTitle} to ${currLoc.name}`,
+                origin: prevLoc,
+                destination: currLoc,
+                startTime,
+                endTime,
+                memberIds: [mid]
+              };
+            }
+
+            // Aggregate members safely
+            const navMembers = travelEvents.find(t => t.id === navEvent.id) 
+              || travelEvents.find(t => t.origin?.name === navEvent.origin?.name && t.destination?.name === navEvent.destination?.name);
+
+            if (navMembers) {
+              if (!navMembers.memberIds) navMembers.memberIds = [];
+              if (!navMembers.memberIds.includes(mid)) navMembers.memberIds.push(mid);
+            } else {
+              if (!navEvent.memberIds) navEvent.memberIds = [];
+              if (!navEvent.memberIds.includes(mid)) navEvent.memberIds.push(mid);
+              travelEvents.push(navEvent);
+            }
+          }
+        }
+        lastEventPerMember[mid] = current;
+      });
+    });
+
+    const finalEvents = [...nonTravelEvents, ...travelEvents].sort((a, b) => {
+      const timeA = toMinutes(a.startTime);
+      const timeB = toMinutes(b.startTime);
+      if (timeA !== timeB) return timeA - timeB;
+      if (a.type === 'travel' && b.type !== 'travel') return 1;
+      if (a.type !== 'travel' && b.type === 'travel') return -1;
+      return 0;
+    });
+
+    newItin[dayIdx] = { ...day, events: finalEvents };
+    return newItin;
   };
 
   const handleGenerateNavigation = () => {
@@ -1969,7 +1977,7 @@ export default function App() {
   };
 
   const handleToggleHide = (dayIdx: number, eventId: string) => {
-    const newItinerary = itinerary.map((day, dIdx) => {
+    let newItinerary = itinerary.map((day, dIdx) => {
       if (dIdx !== dayIdx) return day;
       
       const newEvents = day.events.map((event) => {
@@ -1979,45 +1987,10 @@ export default function App() {
         return event;
       });
 
-      // Update travel events to skip hidden activities
-      const fixedEvents = newEvents.map((event, idx) => {
-        if (event.type !== 'travel') return event;
-
-        let newOrigin = event.origin;
-        let newDestination = event.destination;
-
-        // If the activity this travel leads to is hidden, find the next visible one
-        const nextEvent = newEvents[idx + 1];
-        if (nextEvent && nextEvent.hidden) {
-          for (let i = idx + 1; i < newEvents.length; i++) {
-            const e = newEvents[i];
-            if (!e.hidden) {
-              if (e.location) { newDestination = e.location; break; }
-              if (e.origin) { newDestination = e.origin; break; }
-            }
-          }
-        }
-
-        // If the activity this travel comes from is hidden, find the previous visible one
-        const prevEvent = newEvents[idx - 1];
-        if (prevEvent && prevEvent.hidden) {
-          for (let i = idx - 1; i >= 0; i--) {
-            const e = newEvents[i];
-            if (!e.hidden) {
-              if (e.location) { newOrigin = e.location; break; }
-              if (e.destination) { newOrigin = e.destination; break; }
-            }
-          }
-        }
-
-        // If either the origin or destination activity is hidden and we couldn't find a replacement,
-        // or if this travel event itself is now redundant, we might want to hide it.
-        // For now, we just update the coordinates.
-        return { ...event, origin: newOrigin, destination: newDestination };
-      });
-
-      return { ...day, events: fixedEvents };
+      return { ...day, events: newEvents };
     });
+
+    newItinerary = recalculateRoutesAroundEvent(dayIdx, eventId, newItinerary);
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
   };
@@ -2295,11 +2268,14 @@ export default function App() {
       return;
     }
     const { dayIdx, actIdx } = editingActivity;
-    const newItinerary = [...itinerary];
+    let newItinerary = [...itinerary];
     if (actIdx === null) {
-      newItinerary[dayIdx].events.push({ ...updated, id: Math.random().toString(36).substr(2, 9) });
+      const newEvent = { ...updated, id: Math.random().toString(36).substr(2, 9) };
+      newItinerary[dayIdx].events.push(newEvent);
+      newItinerary = recalculateRoutesAroundEvent(dayIdx, newEvent.id, newItinerary);
     } else {
       newItinerary[dayIdx].events[actIdx] = updated;
+      newItinerary = recalculateRoutesAroundEvent(dayIdx, updated.id, newItinerary);
     }
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
@@ -2341,8 +2317,14 @@ export default function App() {
       return;
     }
     const { dayIdx, actIdx } = editingActivity;
-    const newItinerary = [...itinerary];
+    let newItinerary = [...itinerary];
+    
+    // We get the event ID before removing it so we can re-route (recalculate passes through without the event)
+    const eventId = newItinerary[dayIdx].events[actIdx].id;
     newItinerary[dayIdx].events.splice(actIdx, 1);
+    
+    newItinerary = recalculateRoutesAroundEvent(dayIdx, eventId, newItinerary);
+    
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
     setEditingActivity(null);
@@ -2435,12 +2417,15 @@ export default function App() {
     event, 
     dayIdx, 
     eventIdx, 
-    isGrouped = false 
+    isGrouped = false,
+    tabId
   }: { 
     event: TripEvent, 
     dayIdx: number, 
     eventIdx: number, 
-    isGrouped?: boolean 
+    isGrouped?: boolean,
+    tabId?: string,
+    key?: string | number
   }) => {
     const isCurrent = isCurrentEvent(event);
     const expandable = isEventExpandable(event);
@@ -2470,7 +2455,7 @@ export default function App() {
         id={event.id}
         onClick={() => expandable && toggleEventExpansion(event.id)}
         className={cn(
-          "rounded-2xl transition-all relative w-full border p-4 pl-12",
+          "rounded-2xl transition-all relative w-full border p-4 pl-12 overflow-hidden",
           event.type === 'travel' 
             ? "bg-transparent border-dashed border-slate-200" 
             : isSuggestion
@@ -2484,6 +2469,17 @@ export default function App() {
           minHeight: isGrouped ? `${calculatedHeight}px` : 'auto'
         }}
       >
+        {/* Member Color Stripe */}
+        {tabId && tabId !== 'everyone' && (
+          <div 
+            className="absolute left-0 top-0 bottom-0 w-1.5 opacity-50"
+            style={{ 
+              background: tabId.split('-').length === 1 
+                ? (masterTravellers.find(m => m.id === tabId)?.color || 'transparent')
+                : `linear-gradient(to bottom, ${tabId.split('-').map(id => masterTravellers.find(m => m.id === id)?.color || 'transparent').join(', ')})`
+            }}
+          />
+        )}
         {/* Category Icon - On the edge */}
         <div className={cn(
           "absolute left-2 top-4 w-8 h-8 rounded-xl flex items-center justify-center border transition-all",
@@ -2500,7 +2496,7 @@ export default function App() {
         </div>
         
         {/* Member Initials - Top Right Inside */}
-        {event.memberIds && event.memberIds.length > 0 && (
+        {(!isGrouped || tabId === 'everyone') && event.memberIds && event.memberIds.length > 0 && (
           <div className="absolute top-4 right-4 flex -space-x-1.5 z-20">
             {(event.memberIds.includes('everyone') ? masterTravellers.map(m => m.id) : event.memberIds).map(mid => {
               const member = masterTravellers.find(m => m.id === mid);
@@ -2570,6 +2566,17 @@ export default function App() {
               )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {event.status === 'confirmed' && event.type === 'activity' && (!event.location || event.location.lat === undefined || event.location.lng === undefined) && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isAdmin) setEditingActivity({ dayIdx, actIdx: eventIdx });
+                  }}
+                  className="text-[8px] font-black text-amber-700 uppercase tracking-tighter bg-amber-100 px-1 py-0.5 rounded border border-amber-300 transition-colors hover:bg-amber-200 flex items-center gap-1"
+                >
+                  <MapPin className="w-2.5 h-2.5" /> Missing location — tap to add
+                </button>
+              )}
               {event.type === 'activity' && (
                 <button 
                   onClick={(e) => {
@@ -3337,20 +3344,33 @@ export default function App() {
                     {yearTrips.map(trip => {
                       // Strip year from title for display
                       const displayTitle = trip.title.replace(/\s*\d{4}\s*/g, ' ').trim();
+                      const isConfirming = confirmDeleteId === trip.id;
                       return (
                         <div key={trip.id} className="relative overflow-hidden rounded-3xl group">
                           {/* Delete Action (Behind) */}
-                          <div className="absolute inset-0 bg-red-500 flex items-center justify-end px-6 z-0">
+                          <div className={cn(
+                            "absolute inset-0 flex items-center justify-end px-6 z-0 transition-colors duration-300",
+                            isConfirming ? "bg-red-600" : "bg-red-500"
+                          )}>
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
-                                console.log('UI: Delete button clicked for trip:', trip.id);
-                                handleDeleteTrip(trip.id);
+                                if (isConfirming) {
+                                  console.log('UI: Delete confirmed for trip:', trip.id);
+                                  handleDeleteTrip(trip.id);
+                                  setConfirmDeleteId(null);
+                                } else {
+                                  setConfirmDeleteId(trip.id);
+                                  // Auto-hide confirm after 3 seconds
+                                  setTimeout(() => setConfirmDeleteId(null), 3000);
+                                }
                               }}
                               className="text-white flex flex-col items-center gap-1 cursor-pointer relative z-10 p-4 active:scale-90 transition-transform"
                             >
                               <Trash2 className="w-6 h-6" />
-                              <span className="text-[10px] font-black uppercase tracking-tighter">Delete</span>
+                              <span className="text-[10px] font-black uppercase tracking-tighter">
+                                {isConfirming ? "Tap to Confirm" : "Delete"}
+                              </span>
                             </button>
                           </div>
 
@@ -3401,16 +3421,6 @@ export default function App() {
                           <p className="text-[10px] font-mono text-slate-400 truncate">{t.id}</p>
                           <p className="text-xs font-bold text-slate-700 truncate">{t.title}</p>
                         </div>
-                        <button 
-                          onClick={() => {
-                            if (window.confirm(`FORCE DELETE trip: ${t.id}?`)) {
-                              handleDeleteTrip(t.id);
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase tracking-tight hover:bg-red-100 transition-colors shrink-0"
-                        >
-                          Force Delete
-                        </button>
                       </div>
                     ))}
                     <pre className="text-[10px] text-slate-600 overflow-x-auto whitespace-pre-wrap font-mono bg-slate-50 p-3 rounded-xl border border-slate-200 mt-4">
@@ -3680,231 +3690,160 @@ export default function App() {
                             const isMainCurrent = isCurrentEvent(mainEvent);
                             
                             const groupId = `${activeDayIdx}-${groupIdx}`;
-                            const activeIdx = activeGroupIndices[groupId] ?? 0;
 
                              return (
                               <div key={groupIdx} className="relative">
                                 {group.length > 1 ? (
-                                  <div className="relative">
-                                    <div 
-                                      ref={scrollRef}
-                                      onScroll={(e) => {
-                                        const scrollLeft = e.currentTarget.scrollLeft;
-                                        const width = e.currentTarget.offsetWidth;
-                                        const idx = Math.round(scrollLeft / width);
-                                        setActiveColumnIdx(idx);
-                                      }}
-                                      className="flex gap-4 items-stretch overflow-x-auto scrollbar-hide snap-x snap-mandatory -mx-6 px-6 pb-6"
-                                    >
-                                      {(() => {
-                                        // Get all unique members involved in this group
-                                        const involvedMemberIds = new Set<string>();
-                                        group.forEach(event => {
-                                          if (event.memberIds && event.memberIds.length > 0) {
-                                            event.memberIds.forEach(id => {
-                                              if (id !== 'everyone') involvedMemberIds.add(id);
-                                            });
-                                          }
-                                        });
-
-                                        // Check if all events in the group are shared by all involved members
-                                        const allEventsShared = group.every(event => {
-                                          const eventMembers = event.memberIds || [];
-                                          if (eventMembers.length === 0 || eventMembers.includes('everyone')) return true;
-                                          return Array.from(involvedMemberIds).every(id => eventMembers.includes(id));
-                                        });
-
-                                        // If no specific members, or only 'everyone', or all events are shared, just show one column
-                                        if (involvedMemberIds.size <= 1 || allEventsShared) {
-                                          return (
-                                            <div className="flex-1 min-w-[280px] snap-center flex flex-col gap-2">
-                                              {group.map((event) => (
-                                                <div key={`${event.id}-shared`} className="flex-1 flex flex-col">
-                                                  <EventTile 
-                                                    event={event} 
-                                                    dayIdx={activeDayIdx}
-                                                    eventIdx={event.originalIdx!}
-                                                    isGrouped={true}
-                                                  />
-                                                </div>
-                                              ))}
-                                            </div>
-                                          );
-                                        }
-
-                                        // Create a column for each involved member
-                                        const sortedMemberIds = Array.from(involvedMemberIds).sort((a, b) => {
-                                          const aIdx = masterTravellers.findIndex(m => m.id === a);
-                                          const bIdx = masterTravellers.findIndex(m => m.id === b);
-                                          return aIdx - bIdx;
-                                        });
-
-                                        // Group members by their event lists
-                                        const memberGroups: { memberIds: string[], events: TripEvent[] }[] = [];
-                                        
-                                        sortedMemberIds.forEach(mid => {
-                                          const memberEvents = group.filter(e => 
-                                            !e.memberIds || 
-                                            e.memberIds.length === 0 || 
-                                            e.memberIds.includes('everyone') || 
-                                            e.memberIds.includes(mid)
-                                          );
-                                          
-                                          if (memberEvents.length === 0) return;
-
-                                          // Find if another member has the exact same events
-                                          const existingGroup = memberGroups.find(mg => {
-                                            if (mg.events.length !== memberEvents.length) return false;
-                                            return mg.events.every((e, i) => e.id === memberEvents[i].id);
-                                          });
-
-                                          if (existingGroup) {
-                                            existingGroup.memberIds.push(mid);
-                                          } else {
-                                            memberGroups.push({ memberIds: [mid], events: memberEvents });
-                                          }
-                                        });
-
-                                        return memberGroups.map((mg, colIdx) => {
-                                          const groupKey = mg.memberIds.join('-');
-                                          const isActive = activeColumnIdx === colIdx;
-                                          
-                                          return (
-                                            <motion.div 
-                                              key={groupKey} 
-                                              animate={{ 
-                                                scale: isActive ? 1 : 0.9,
-                                                opacity: isActive ? 1 : 0.5,
-                                                x: isActive ? 0 : (colIdx < activeColumnIdx ? 10 : -10)
-                                              }}
-                                              className={cn(
-                                                "flex-1 min-w-[85%] snap-center flex flex-col gap-2 transition-all duration-300",
-                                                !isActive && "cursor-pointer"
-                                              )}
-                                              onClick={() => {
-                                                if (!isActive && scrollRef.current) {
-                                                  scrollRef.current.scrollTo({
-                                                    left: colIdx * scrollRef.current.offsetWidth,
-                                                    behavior: 'smooth'
+                                          <div className="relative p-4 rounded-[2rem] bg-slate-100 border border-slate-200 flex flex-col gap-4">
+                                            {(() => {
+                                              // Get all unique members involved in this group
+                                              const involvedMemberIds = new Set<string>();
+                                              group.forEach(event => {
+                                                if (event.memberIds && event.memberIds.length > 0) {
+                                                  event.memberIds.forEach(id => {
+                                                    if (id !== 'everyone') involvedMemberIds.add(id);
                                                   });
                                                 }
-                                              }}
-                                            >
-                                              <div className={cn(
-                                                "px-3 py-1.5 rounded-2xl border transition-all duration-300 flex items-center justify-between gap-2",
-                                                isActive ? "bg-white border-slate-100 shadow-sm" : "bg-slate-50 border-transparent"
-                                              )}>
-                                                <div className="flex items-center gap-2 min-w-0">
-                                                  <div className="flex -space-x-1.5">
-                                                    {mg.memberIds.map(mid => {
-                                                      const member = masterTravellers.find(m => m.id === mid);
+                                              });
+
+                                              // Check if all events in the group are shared by all involved members
+                                              const allEventsShared = group.every(event => {
+                                                const eventMembers = event.memberIds || [];
+                                                if (eventMembers.length === 0 || eventMembers.includes('everyone')) return true;
+                                                return Array.from(involvedMemberIds).every(id => eventMembers.includes(id));
+                                              });
+
+                                              // If no specific members, or only 'everyone', or all events are shared, just show one column
+                                              if (involvedMemberIds.size <= 1 || allEventsShared) {
+                                                return (
+                                                  <div className="flex-1 flex flex-col gap-2">
+                                                    {group.map((event) => (
+                                                      <div key={`${event.id}-shared`} className="flex-1 flex flex-col">
+                                                        <EventTile 
+                                                          event={event} 
+                                                          dayIdx={activeDayIdx}
+                                                          eventIdx={event.originalIdx!}
+                                                          isGrouped={true}
+                                                        />
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                );
+                                              }
+
+                                              const sortedMemberIds = Array.from(involvedMemberIds).sort((a, b) => {
+                                                const aIdx = masterTravellers.findIndex(m => m.id === a);
+                                                const bIdx = masterTravellers.findIndex(m => m.id === b);
+                                                return aIdx - bIdx;
+                                              });
+
+                                              // Group members by their event lists
+                                              const memberGroups: { tabId: string, memberIds: string[], events: TripEvent[] }[] = [];
+                                              
+                                              sortedMemberIds.forEach(mid => {
+                                                const memberEvents = group.filter(e => 
+                                                  !e.memberIds || 
+                                                  e.memberIds.length === 0 || 
+                                                  e.memberIds.includes('everyone') || 
+                                                  e.memberIds.includes(mid)
+                                                );
+                                                if (memberEvents.length === 0) return;
+
+                                                const existingGroup = memberGroups.find(mg => {
+                                                  if (mg.events.length !== memberEvents.length) return false;
+                                                  return mg.events.every((e, i) => e.id === memberEvents[i].id);
+                                                });
+
+                                                if (existingGroup) {
+                                                  existingGroup.memberIds.push(mid);
+                                                  existingGroup.tabId = existingGroup.memberIds.join('-');
+                                                } else {
+                                                  memberGroups.push({ tabId: mid, memberIds: [mid], events: memberEvents });
+                                                }
+                                              });
+
+                                              // 'Everyone' events (events shared by all involved members)
+                                              const sharedEvents = group.filter(e => {
+                                                if (!e.memberIds || e.memberIds.length === 0 || e.memberIds.includes('everyone')) return true;
+                                                return Array.from(involvedMemberIds).every(id => e.memberIds.includes(id));
+                                              });
+
+                                              // Add 'everyone' tab only if there are shared events
+                                              if (sharedEvents.length > 0) {
+                                                memberGroups.push({ tabId: 'everyone', memberIds: [], events: sharedEvents });
+                                              }
+
+                                              const activeTabId = activeGroupTabs[groupId] || memberGroups[0]?.tabId;
+                                              const activeGroup = memberGroups.find(mg => mg.tabId === activeTabId) || memberGroups[0];
+
+                                              return (
+                                                <>
+                                                  <div className="flex gap-2 p-1.5 bg-slate-200/50 rounded-full w-max mx-auto shadow-inner shadow-slate-200/50">
+                                                    {memberGroups.map(mg => {
+                                                      const isActive = activeTabId === mg.tabId;
                                                       return (
-                                                        <div 
-                                                          key={mid}
-                                                          className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[10px] font-bold text-white shadow-sm"
-                                                          style={{ backgroundColor: member?.color || '#cbd5e1' }}
+                                                        <button
+                                                          key={mg.tabId}
+                                                          onClick={() => setActiveGroupTabs(prev => ({ ...prev, [groupId]: mg.tabId }))}
+                                                          className={cn(
+                                                            "flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-300",
+                                                            isActive ? "bg-white shadow-sm scale-105" : "hover:bg-slate-200/50 grayscale hover:grayscale-0 opacity-50 hover:opacity-100"
+                                                          )}
                                                         >
-                                                          {member?.initials}
-                                                        </div>
-                                                      );
+                                                          {mg.tabId === 'everyone' ? (
+                                                            <div className="flex items-center gap-1.5">
+                                                              <Users className="w-3.5 h-3.5 text-slate-500" />
+                                                              <span className="text-[10px] font-bold text-slate-700 uppercase tracking-widest">Everyone</span>
+                                                            </div>
+                                                          ) : (
+                                                            <div className="flex items-center gap-2">
+                                                              <div className="flex -space-x-1.5">
+                                                                {mg.memberIds.map(mid => {
+                                                                  const member = masterTravellers.find(m => m.id === mid);
+                                                                  return (
+                                                                    <div 
+                                                                      key={mid} 
+                                                                      className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black text-white border-2 border-white/50 shadow-sm" 
+                                                                      style={{ backgroundColor: member?.color || '#cbd5e1' }}
+                                                                    >
+                                                                      {member?.initials}
+                                                                    </div>
+                                                                  );
+                                                                })}
+                                                              </div>
+                                                            </div>
+                                                          )}
+                                                        </button>
+                                                      )
                                                     })}
                                                   </div>
-                                                  {isActive && (
-                                                    <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest truncate">
-                                                      {mg.memberIds.map(mid => masterTravellers.find(m => m.id === mid)?.name || mid).join(' & ')}
-                                                    </p>
-                                                  )}
-                                                </div>
-                                                
-                                                <div className="flex gap-1">
-                                                  {Array.from(new Set(mg.events.map(e => e.category))).slice(0, 3).map(cat => (
-                                                    <div key={cat} className={cn(isActive ? "text-slate-400" : "text-slate-300")}>
-                                                      {cat === 'food' ? <Utensils className="w-3 h-3" /> :
-                                                       cat === 'stay' ? <Home className="w-3 h-3" /> :
-                                                       cat === 'logistics' ? <Plane className="w-3 h-3" /> :
-                                                       <MapPin className="w-3 h-3" />}
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              </div>
-                                              
-                                              <div className={cn(
-                                                "flex-1 flex flex-col gap-2 transition-all duration-500",
-                                                isActive ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none overflow-hidden h-0"
-                                              )}>
-                                                {mg.events.map((event) => (
-                                                  <div key={`${event.id}-${groupKey}`} className="flex-1 flex flex-col">
-                                                    <EventTile 
-                                                      event={event} 
-                                                      dayIdx={activeDayIdx}
-                                                      eventIdx={event.originalIdx!}
-                                                      isGrouped={true}
-                                                    />
-                                                  </div>
-                                                ))}
-                                              </div>
-                                              
-                                              {!isActive && (
-                                                <div className="flex-1 flex flex-col items-center justify-center py-8 border-2 border-dashed border-slate-100 rounded-3xl bg-slate-50/50">
-                                                  <div className="flex flex-col items-center gap-2 opacity-40">
-                                                    <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
-                                                      <ChevronRight className={cn("w-4 h-4 text-slate-400", colIdx < activeColumnIdx && "rotate-180")} />
-                                                    </div>
-                                                    <span className="text-[8px] font-black uppercase tracking-widest text-slate-400">View Itinerary</span>
-                                                  </div>
-                                                </div>
-                                              )}
-                                            </motion.div>
-                                          );
-                                        });
-                                      })()}
-                                    </div>
-                                    
-                                    {/* Column Indicators */}
-                                    <div className="flex justify-center gap-1.5 mt-2">
-                                      {(() => {
-                                        // Need to recalculate memberGroups for indicators
-                                        const involvedMemberIds = new Set<string>();
-                                        group.forEach(event => {
-                                          if (event.memberIds && event.memberIds.length > 0) {
-                                            event.memberIds.forEach(id => {
-                                              if (id !== 'everyone') involvedMemberIds.add(id);
-                                            });
-                                          }
-                                        });
-                                        const sortedMemberIds = Array.from(involvedMemberIds).sort((a, b) => {
-                                          const aIdx = masterTravellers.findIndex(m => m.id === a);
-                                          const bIdx = masterTravellers.findIndex(m => m.id === b);
-                                          return aIdx - bIdx;
-                                        });
-                                        const memberGroups: string[] = [];
-                                        const processedMids = new Set<string>();
-                                        sortedMemberIds.forEach(mid => {
-                                          if (processedMids.has(mid)) return;
-                                          const memberEvents = group.filter(e => !e.memberIds || e.memberIds.length === 0 || e.memberIds.includes('everyone') || e.memberIds.includes(mid));
-                                          const sameEventsMids = sortedMemberIds.filter(otherMid => {
-                                            const otherEvents = group.filter(e => !e.memberIds || e.memberIds.length === 0 || e.memberIds.includes('everyone') || e.memberIds.includes(otherMid));
-                                            if (otherEvents.length !== memberEvents.length) return false;
-                                            return otherEvents.every((e, i) => e.id === memberEvents[i].id);
-                                          });
-                                          memberGroups.push(sameEventsMids.join('-'));
-                                          sameEventsMids.forEach(id => processedMids.add(id));
-                                        });
 
-                                        if (memberGroups.length <= 1) return null;
-
-                                        return memberGroups.map((_, idx) => (
-                                          <div 
-                                            key={idx} 
-                                            className={cn(
-                                              "w-1.5 h-1.5 rounded-full transition-all duration-300",
-                                              activeColumnIdx === idx ? "bg-blue-600 w-4" : "bg-slate-200"
-                                            )} 
-                                          />
-                                        ));
-                                      })()}
-                                    </div>
-                                  </div>
+                                                  <div className="flex flex-col gap-2 relative">
+                                                    <AnimatePresence mode="popLayout">
+                                                      <motion.div
+                                                        key={activeTabId}
+                                                        initial={{ opacity: 0, scale: 0.98, y: 5 }}
+                                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                                        exit={{ opacity: 0, scale: 0.98, y: -5 }}
+                                                        transition={{ duration: 0.2 }}
+                                                        className="flex flex-col gap-2"
+                                                      >
+                                                        {activeGroup.events.map((event) => (
+                                                          <EventTile 
+                                                            key={`${event.id}-${activeTabId}`}
+                                                            event={event} 
+                                                            dayIdx={activeDayIdx}
+                                                            eventIdx={event.originalIdx!}
+                                                            isGrouped={true}
+                                                          />
+                                                        ))}
+                                                      </motion.div>
+                                                    </AnimatePresence>
+                                                  </div>
+                                                </>
+                                              );
+                                            })()}
+                                          </div>
                                 ) : (
                                   <EventTile 
                                     event={group[0]} 
