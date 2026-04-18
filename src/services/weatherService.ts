@@ -44,14 +44,21 @@ export const weatherService = {
       // If the date is within 16 days, we can get a forecast.
       const diffDays = Math.ceil((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
-      if (diffDays < 0 || diffDays > 16) {
-        // Too far in the future or past for standard forecast
+      const dateString = date.toISOString().split('T')[0];
+      
+      let url = '';
+
+      if (diffDays < 0) {
+        // Date is in the past, use the archive API
+        url = `https://archive-api.open-meteo.com/v1/archive?latitude=${loc.lat}&longitude=${loc.lng}&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto&start_date=${dateString}&end_date=${dateString}`;
+      } else if (diffDays <= 16) {
+        // Date is within next 16 days, use forecast API
+        url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lng}&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto&start_date=${dateString}&end_date=${dateString}`;
+      } else {
+        // More than 16 days ahead, show nothing
         return null;
       }
 
-      const dateString = date.toISOString().split('T')[0];
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lng}&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto&start_date=${dateString}&end_date=${dateString}`;
-      
       const res = await fetch(url);
       const data = await res.json();
 
