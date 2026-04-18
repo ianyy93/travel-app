@@ -1185,6 +1185,8 @@ export default function App() {
   const [itinerary, setItinerary] = useState<DayPlan[]>(ITINERARY_DATA);
   const [user, setUser] = useState<User | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [editingActivity, setEditingActivity] = useState<{ dayIdx: number, actIdx: number | null } | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
@@ -1225,6 +1227,27 @@ export default function App() {
   const [weatherData, setWeatherData] = useState<Record<number, WeatherInfo>>({});
 
   const [activeFilter, setActiveFilter] = useState<string>('all');
+
+  // Refs for AI Proposal application to avoid stale closures
+  const itineraryRef = useRef(itinerary);
+  const shortlistRef = useRef(shortlist);
+  const flightInfoRef = useRef(flightInfo);
+  const rentalInfoRef = useRef(rentalInfo);
+  const staysRef = useRef(stays);
+  const restaurantsRef = useRef(restaurants);
+  const experiencesRef = useRef(experiences);
+  const membersRef = useRef(members);
+  const tripTitleRef = useRef(tripTitle);
+
+  useEffect(() => { itineraryRef.current = itinerary; }, [itinerary]);
+  useEffect(() => { shortlistRef.current = shortlist; }, [shortlist]);
+  useEffect(() => { flightInfoRef.current = flightInfo; }, [flightInfo]);
+  useEffect(() => { rentalInfoRef.current = rentalInfo; }, [rentalInfo]);
+  useEffect(() => { staysRef.current = stays; }, [stays]);
+  useEffect(() => { restaurantsRef.current = restaurants; }, [restaurants]);
+  useEffect(() => { experiencesRef.current = experiences; }, [experiences]);
+  useEffect(() => { membersRef.current = members; }, [members]);
+  useEffect(() => { tripTitleRef.current = tripTitle; }, [tripTitle]);
 
   const isAdmin = useMemo(() => {
     const admins = ['ianyy93@gmail.com', 'wingin.carrie@gmail.com'];
@@ -1413,8 +1436,8 @@ export default function App() {
         
         if (hasPlaceInTitle(firstDayTitle)) {
           finalTitle = firstDayTitle;
-        } else if (hasPlaceInTitle(tripTitle)) {
-          finalTitle = tripTitle;
+        } else if (hasPlaceInTitle(tripTitleRef.current)) {
+          finalTitle = tripTitleRef.current;
         } else {
           // Look for the most frequent location name in the itinerary
           const locations = aiProposal.itinerary.flatMap(d => d.events.map(e => e.location?.name || e.destination?.name)).filter(Boolean);
@@ -1460,7 +1483,7 @@ export default function App() {
         
         setView('itinerary');
       } else {
-        setItineraryHistory(prev => [...prev, itinerary]);
+        setItineraryHistory(prev => [...prev, itineraryRef.current]);
         setItinerary(filteredItinerary);
         
         const aiShortlist = filteredAiShortlist.map(p => ({
@@ -1470,22 +1493,22 @@ export default function App() {
         }));
         
         const updatedShortlist = [
-          ...shortlist, 
-          ...aiShortlist.filter(p => !shortlist.some(s => s.name === p.name))
+          ...shortlistRef.current, 
+          ...aiShortlist.filter(p => !shortlistRef.current.some(s => s.name === p.name))
         ];
           
         setShortlist(updatedShortlist);
         
         setTripTitle(finalTitle);
         setTripDates(finalDates);
-        setFlightInfo(aiProposal.flightInfo || flightInfo);
-        setRentalInfo(aiProposal.rentalInfo || rentalInfo);
-        setStays(aiProposal.stays || stays);
-        setRestaurants(aiProposal.restaurants || restaurants);
-        setExperiences(aiProposal.experiences || experiences);
-        setMembers(aiProposal.members || members);
+        setFlightInfo(aiProposal.flightInfo || flightInfoRef.current);
+        setRentalInfo(aiProposal.rentalInfo || rentalInfoRef.current);
+        setStays(aiProposal.stays || staysRef.current);
+        setRestaurants(aiProposal.restaurants || restaurantsRef.current);
+        setExperiences(aiProposal.experiences || experiencesRef.current);
+        setMembers(aiProposal.members || membersRef.current);
         
-        saveToFirestore(filteredItinerary, finalTitle, finalDates, false, updatedShortlist, undefined, aiProposal.flightInfo || flightInfo, aiProposal.rentalInfo || rentalInfo, aiProposal.stays || stays, aiProposal.restaurants || restaurants, aiProposal.experiences || experiences, aiProposal.members || members);
+        saveToFirestore(filteredItinerary, finalTitle, finalDates, false, updatedShortlist, undefined, aiProposal.flightInfo || flightInfoRef.current, aiProposal.rentalInfo || rentalInfoRef.current, aiProposal.stays || staysRef.current, aiProposal.restaurants || restaurantsRef.current, aiProposal.experiences || experiencesRef.current, aiProposal.members || membersRef.current);
       }
       
       setAiProposal(null);
@@ -1959,116 +1982,94 @@ export default function App() {
     );
   }, []);
 
-  // Auth & Sync
+  // Auth Effect: Just watches for login/logout
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (u) => setUser(u));
+    const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsAuthReady(true);
+    });
     
     // Handle redirect result
     getRedirectResult(auth).catch((err) => {
       console.error("Redirect login failed", err);
-      setLoginError("Redirect login failed: " + err.message);
+      if (err.code !== 'auth/popup-blocked') { // Noise reduction
+        setLoginError("Redirect login failed: " + err.message);
+      }
     });
 
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Data Sync Effect: Runs after trip ID is set and auth is ready
+  useEffect(() => {
+    if (!isAuthReady) return;
+
+    let isSubscribed = true;
     const path = `trips/${currentTripId}`;
     const tripDoc = doc(db, 'trips', currentTripId);
     
     const unsubscribeSync = onSnapshot(tripDoc, (snapshot) => {
+      if (!isSubscribed) return;
+
+      const currentAuthUser = auth.currentUser;
+      const isAdminCheck = currentAuthUser && ['ianyy93@gmail.com', 'wingin.carrie@gmail.com'].includes(currentAuthUser.email || '');
+
       if (snapshot.exists()) {
         const data = snapshot.data();
         
-        // Auto-sync logic: If template version in DB is older than code, update it
-        const dbVersion = data.templateVersion || 0;
-        if (dbVersion < TEMPLATE_VERSION && isAdmin) {
-          console.log(`Auto-syncing itinerary from version ${dbVersion} to ${TEMPLATE_VERSION}`);
+        // Auto-sync logic is removed to prevent overwriting user data.
+        // TEMPLATE_VERSION is now used only for informational badges if needed.
+
+        // Trigger local updates if user is not currently editing the title
+        if (!isEditingTitle) {
+          setItinerary(data.days);
           
-          // Save current state to history before overwriting
-          const historyRef = doc(collection(db, 'trips', currentTripId, 'history'));
-          setDoc(historyRef, {
-            days: data.days,
-            timestamp: new Date().toISOString(),
-            updatedBy: 'System (Auto-Sync)',
-            title: data.title,
-            isAutoBackup: true
-          }).then(() => {
-            saveToFirestore(ITINERARY_DATA, data.title, data.dates, true);
-          });
+          let finalTitle = data.title;
+          if (!finalTitle || finalTitle === 'Loading...') {
+            finalTitle = currentTripId === 'main' ? 'Arizona 2026' : 'Untitled Trip';
+          }
+          setTripTitle(finalTitle);
+
+          // Robust dates handling: ensure dates are never missing for main trip
+          let finalDates = data.dates;
+          if (!finalDates || finalDates === 'Dates TBD') {
+            finalDates = currentTripId === 'main' ? 'May 14 - May 19' : 'Dates TBD';
+          }
+          setTripDates(finalDates);
         }
 
-        setItinerary(data.days);
-        
-        // Robust title handling: never accept "Loading..." from DB
-        let finalTitle = data.title;
-        if (!finalTitle || finalTitle === 'Loading...') {
-          finalTitle = currentTripId === 'main' ? 'Arizona 2026' : 'Untitled Trip';
-        }
-
-        // Robust dates handling: ensure dates are never missing for main trip
-        let finalDates = data.dates;
-        if (!finalDates || finalDates === 'Dates TBD') {
-          finalDates = currentTripId === 'main' ? 'May 14 - May 19' : 'Dates TBD';
-        }
-
-        setTripTitle(finalTitle);
-        setTripDates(finalDates);
         setShortlist(data.shortlist || []);
         
-        // Robust reservation handling: check for empty objects
-        const hasFlights = data.flightInfo && Object.keys(data.flightInfo).length > 0;
-        const hasRental = data.rentalInfo && Object.keys(data.rentalInfo).length > 0;
-        const hasStays = data.stays && data.stays.length > 0;
-        const hasRestaurants = data.restaurants && data.restaurants.length > 0;
-
-        const finalFlights = hasFlights ? data.flightInfo : (currentTripId === 'main' ? FLIGHT_DETAILS : null);
-        const finalRental = hasRental ? data.rentalInfo : (currentTripId === 'main' ? RENTAL_DETAILS : null);
-        const finalStays = hasStays ? data.stays : (currentTripId === 'main' ? STAY_DETAILS : []);
-        const finalRestaurants = hasRestaurants ? data.restaurants : (currentTripId === 'main' ? RESTAURANT_DETAILS : []);
-
-        setFlightInfo(finalFlights);
-        setRentalInfo(finalRental);
-        setStays(finalStays);
-        setRestaurants(finalRestaurants);
-        
+        // Robust reservation handling: NEVER fallback to constants unless initializing a fresh trip.
+        setFlightInfo(data.flightInfo || null);
+        setRentalInfo(data.rentalInfo || null);
+        setStays(data.stays || []);
+        setRestaurants(data.restaurants || []);
         setExperiences(data.experiences || []);
         setMembers(data.members || []);
         setIsLoadingTrip(false);
 
-        // Debug log for verification
-        console.log(`[Firestore Sync] Trip: "${finalTitle}" | Dates: "${finalDates}" | Flights: ${hasFlights ? 'YES' : 'FALLBACK'} | Stays: ${hasStays ? 'YES' : 'FALLBACK'}`);
-
-        // If we had to use fallbacks for the main trip, push them to Firestore once to "fix" the backend.
-        if (currentTripId === 'main' && isAdmin && (
-          data.title === 'Loading...' || !data.title || 
-          !data.dates || data.dates === 'Dates TBD' ||
-          !hasFlights || !hasRental || !hasStays
-        )) {
-          console.warn("Main trip data incomplete in Firestore. Pushing correct data now...");
-          saveToFirestore(
-            data.days, 
-            finalTitle, 
-            finalDates, 
-            true, 
-            data.shortlist, 
-            undefined,
-            finalFlights,
-            finalRental,
-            finalStays,
-            finalRestaurants
-          );
-        }
+        // Code that pushed Correct data back is removed. 
+        // Only initializing fresh documents is permitted.
       } else if (currentTripId === 'main') {
-        // Only initialize if we have a user and they are an admin
-        if (auth.currentUser && isAdmin) {
+        // Initialize if we have an admin
+        if (currentAuthUser && isAdminCheck) {
+          console.log("Initializing Main Trip with defaults...");
           setDoc(tripDoc, { 
             days: ITINERARY_DATA,
             title: 'Arizona 2026',
             dates: 'May 14 - May 19',
             templateVersion: TEMPLATE_VERSION,
+            initializedAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString(),
-            updatedBy: auth.currentUser.email,
+            updatedBy: currentAuthUser.email,
             stays: STAY_DETAILS,
             flightInfo: FLIGHT_DETAILS,
-            rentalInfo: RENTAL_DETAILS
+            rentalInfo: RENTAL_DETAILS,
+            restaurants: RESTAURANT_DETAILS
           }).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
+        } else {
+          setIsLoadingTrip(false);
         }
       } else {
         // Trip doesn't exist and it's not 'main'
@@ -2078,28 +2079,29 @@ export default function App() {
         setIsLoadingTrip(false);
       }
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      if (isSubscribed) handleFirestoreError(error, OperationType.GET, path);
     });
 
     // Sync History
     const historyCollection = collection(db, 'trips', currentTripId, 'history');
     const historyQuery = query(historyCollection, orderBy('timestamp', 'desc'), limit(50));
     const unsubscribeHistory = onSnapshot(historyQuery, (snapshot) => {
+      if (!isSubscribed) return;
       const history = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as any[];
       setDbHistory(history);
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `${path}/history`);
+      if (isSubscribed) handleFirestoreError(error, OperationType.GET, `${path}/history`);
     });
 
     return () => {
-      unsubscribeAuth();
+      isSubscribed = false;
       unsubscribeSync();
       unsubscribeHistory();
     };
-  }, [currentTripId, isAdmin]);
+  }, [currentTripId, isAuthReady]); // isAdmin removed from deps, checked inside snapshot handler.
 
   // Sync Master Travellers
   useEffect(() => {
@@ -3017,6 +3019,14 @@ export default function App() {
                   <input 
                     type="text"
                     value={tripTitle}
+                    onFocus={() => setIsEditingTitle(true)}
+                    onBlur={() => setIsEditingTitle(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setIsEditingTitle(false);
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
                     onChange={(e) => {
                       setTripTitle(e.target.value);
                       saveToFirestore(itinerary, e.target.value, tripDates);
@@ -3201,6 +3211,14 @@ export default function App() {
               <input 
                 type="text"
                 value={tripDates}
+                onFocus={() => setIsEditingTitle(true)}
+                onBlur={() => setIsEditingTitle(false)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setIsEditingTitle(false);
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
                 onChange={(e) => {
                   setTripDates(e.target.value);
                   saveToFirestore(itinerary, tripTitle, e.target.value);
@@ -4099,33 +4117,6 @@ export default function App() {
                 {!hasFlightInfo && !hasRentalInfo && (!stays || stays.length === 0) && (!restaurants || restaurants.length === 0) && (!experiences || experiences.length === 0) && (
                   <section className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
                     <p className="text-slate-400 text-sm">No reservation details available for this trip.</p>
-                  </section>
-                )}
-
-                {isAdmin && (
-                  <section className="pt-4 border-t border-slate-200">
-                    <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100">
-                      <h3 className="text-sm font-bold text-blue-900 mb-1 flex items-center gap-2">
-                        <Sparkles className="w-4 h-4" /> Admin Tools
-                      </h3>
-                      <p className="text-xs text-blue-700 mb-4">
-                        If the itinerary data seems out of sync or you want to reset to the default template, use the button below.
-                      </p>
-                      <button 
-                        onClick={() => {
-                          if (window.confirm('Reset current trip to the default template? This will overwrite any manual changes in Firestore.')) {
-                            setItinerary(ITINERARY_DATA);
-                            setStays(STAY_DETAILS);
-                            setRestaurants(RESTAURANT_DETAILS);
-                            saveToFirestore(ITINERARY_DATA, 'Arizona 2026', 'May 14 - May 19', false, [], undefined, FLIGHT_DETAILS, RENTAL_DETAILS, STAY_DETAILS, RESTAURANT_DETAILS);
-                            alert('Itinerary reset to template successfully.');
-                          }
-                        }}
-                        className="w-full py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md active:scale-95 transition-transform"
-                      >
-                        Reset to Template
-                      </button>
-                    </div>
                   </section>
                 )}
               </div>

@@ -699,6 +699,9 @@ export const ITINERARY_DATA: DayPlan[] = [
   }
 ];
 
+// --- ARIZONA 2026 ONLY ---
+// These details are specific to the default template trip. 
+// DO NOT use them as fallbacks for other trips.
 export const FLIGHT_DETAILS = {
   outbound: {
     number: "PD 641",
@@ -745,6 +748,7 @@ export const STAY_DETAILS = [
 ];
 
 export const RESTAURANT_DETAILS = [];
+// --- END ARIZONA ONLY ---
 
 export const GAS_STATIONS = [
   { name: "Costco Gas", address: "Phoenix, AZ", lat: 33.4484, lng: -112.0740, regular: "$3.85", brand: "Costco" },

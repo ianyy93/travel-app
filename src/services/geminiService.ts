@@ -5,16 +5,19 @@ import firebaseConfig from "../../firebase-applet-config.json";
 
 const GEMINI_KEY =
   import.meta.env.VITE_GEMINI_API_KEY ||
-  process.env.GEMINI_API_KEY ||
-  firebaseConfig.apiKey;
+  process.env.GEMINI_API_KEY;
 
 // Log which key source is being used (obfuscated for safety)
 console.log('Gemini initialized with key source:', 
   import.meta.env.VITE_GEMINI_API_KEY ? 'Cloudflare Build Var' : 
-  process.env.GEMINI_API_KEY ? 'AI Studio Secret' : 'Firebase Fallback'
+  process.env.GEMINI_API_KEY ? 'AI Studio Secret' : 'NONE - Key Missing'
 );
 
-const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
+if (!GEMINI_KEY) {
+  console.warn("Gemini API key is missing. Please add VITE_GEMINI_API_KEY to your environment settings.");
+}
+
+const ai = new GoogleGenAI({ apiKey: GEMINI_KEY || 'MISSING_KEY' });
 
 export interface GeminiSuggestion {
   id: string;
@@ -94,7 +97,7 @@ export const geminiService = {
     currentExperiences: any[] = []
   ): Promise<GeminiProposal> {
     if (!GEMINI_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured. Please add it in the Settings menu.");
+      throw new Error("Gemini API key is missing. Please add VITE_GEMINI_API_KEY to your environment settings.");
     }
 
     const isNewTripRequest = currentItinerary.length === 0 || 
@@ -433,7 +436,7 @@ export const geminiService = {
     refinePrompt: string
   ): Promise<any[]> {
     if (!GEMINI_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured.");
+      throw new Error("Gemini API key is missing. Please add VITE_GEMINI_API_KEY to your environment settings.");
     }
 
     const systemInstruction = `
