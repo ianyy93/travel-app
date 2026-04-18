@@ -1,4 +1,5 @@
 import { Location } from "../constants";
+import { parseItineraryDate } from "../lib/utils";
 
 export interface WeatherInfo {
   minTemp: number;
@@ -22,21 +23,11 @@ const getConditionFromCode = (code: number): { condition: string, icon: string }
 };
 
 export const weatherService = {
-  async getWeatherForDay(loc: Location, dateStr: string): Promise<WeatherInfo | null> {
+  async getWeatherForDay(loc: Location, dateStr: string, tripDatesStr?: string): Promise<WeatherInfo | null> {
     try {
-      // Parse dateStr like "May 14" to a Date object for 2026
-      const monthMap: Record<string, number> = {
-        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-      };
-      const parts = dateStr.split(' ');
-      if (parts.length < 2) return null;
-      
-      const month = monthMap[parts[0].substring(0, 3)];
-      const day = parseInt(parts[1]);
-      if (isNaN(month) || isNaN(day)) return null;
+      const date = parseItineraryDate(dateStr, tripDatesStr);
+      if (!date) return null;
 
-      const date = new Date(2026, month, day);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 

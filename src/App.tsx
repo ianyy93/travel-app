@@ -70,7 +70,7 @@ import {
   Location,
   TripMember
 } from './constants';
-import { cn } from './lib/utils';
+import { cn, parseItineraryDate } from './lib/utils';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { 
@@ -1322,7 +1322,7 @@ export default function App() {
                     day.events.find(e => e.origin)?.origin;
         
         if (loc) {
-          const info = await weatherService.getWeatherForDay(loc, day.date);
+          const info = await weatherService.getWeatherForDay(loc, day.date, tripDates);
           if (info) {
             newWeather[i] = info;
           }
@@ -2404,12 +2404,13 @@ export default function App() {
   const isCurrentEvent = (event: TripEvent) => {
     if (!event.startTime || !activeDay) return false;
     
-    const tripYear = 2026;
-    const tripMonth = 4; // May (0-indexed is 4)
-    const day = parseInt(activeDay.date.split(' ')[1]);
+    const activeDate = parseItineraryDate(activeDay.date, tripDates);
+    if (!activeDate) return false;
     
     // Check if it's the right day
-    if (currentTime.getFullYear() !== tripYear || currentTime.getMonth() !== tripMonth || currentTime.getDate() !== day) {
+    if (currentTime.getFullYear() !== activeDate.getFullYear() || 
+        currentTime.getMonth() !== activeDate.getMonth() || 
+        currentTime.getDate() !== activeDate.getDate()) {
       return false;
     }
 
