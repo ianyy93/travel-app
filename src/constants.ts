@@ -33,6 +33,7 @@ export interface TripEvent {
   memberIds?: string[]; // IDs of members participating in this event
   originalIdx?: number; // Internal index for editing
   originalTitle?: string; // Original title before suggestion selection
+  status?: 'confirmed' | 'suggestion' | 'pending-meal'; // Fix 2.2: Suggestion status
 }
 
 export interface DayPlan {

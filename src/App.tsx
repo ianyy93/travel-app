@@ -1357,8 +1357,14 @@ export default function App() {
       const contextMembers = members.length > 0 ? members : masterTravellers;
       const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
       
-      console.log('AI Action:', mode, 'Prompt:', finalPrompt);
+      const isNewTrip = view === 'list' || itinerary.length === 0;
+      const targetModel = (isNewTrip && mode === 'full') 
+        ? 'gemini-3-flash-preview' 
+        : 'gemini-3.1-flash-lite-preview';
+      
+      console.log('AI Action:', mode, 'Model:', targetModel, 'Prompt:', finalPrompt);
       const proposal = await geminiService.proposeChanges(
+        targetModel,
         contextItinerary, 
         finalPrompt, 
         mode, 
@@ -1421,7 +1427,20 @@ export default function App() {
         return true;
       });
 
-      let finalTitle = aiProposal.title;
+      let finalTitle = aiProposal.title || '';
+      
+      const cleanTitle = (t: string) => {
+        let cleaned = t.replace(/Adventure|Journey|Trip|Itinerary|Arrival|New/ig, '').trim();
+        const yearMatch = cleaned.match(/\b(20\d{2})\b/);
+        const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
+        cleaned = cleaned.replace(/\b20\d{2}\b/g, '').replace(/[^a-zA-Z\s&,]/g, '').trim();
+        const parts = cleaned.split(/&|,/).map(s => s.trim()).filter(Boolean);
+        if (parts.length > 0) {
+          return parts.slice(0, 3).join(' & ') + ' ' + year;
+        }
+        return `New Destination ${year}`;
+      };
+
       const isGenericTitle = (t: string | undefined) => !t || 
                             t.toLowerCase().includes('arizona') || 
                             t.toLowerCase().includes('arrival') || 
@@ -1430,28 +1449,27 @@ export default function App() {
                             t.length < 3;
 
       if (isGenericTitle(finalTitle)) {
-        // Try to find a better title from the first day or destination
         const firstDayTitle = aiProposal.itinerary[0]?.title;
         const hasPlaceInTitle = (t: string | undefined) => t && !isGenericTitle(t);
         
         if (hasPlaceInTitle(firstDayTitle)) {
-          finalTitle = firstDayTitle;
+          finalTitle = firstDayTitle!;
         } else if (hasPlaceInTitle(tripTitleRef.current)) {
           finalTitle = tripTitleRef.current;
         } else {
-          // Look for the most frequent location name in the itinerary
           const locations = aiProposal.itinerary.flatMap(d => d.events.map(e => e.location?.name || e.destination?.name)).filter(Boolean);
           if (locations.length > 0) {
             const counts: Record<string, number> = {};
             locations.forEach(loc => { counts[loc!] = (counts[loc!] || 0) + 1; });
             const topLoc = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-            const year = new Date().getFullYear();
-            finalTitle = `${topLoc} ${year}`;
+            finalTitle = topLoc;
           } else {
             finalTitle = 'New Trip';
           }
         }
       }
+      
+      finalTitle = cleanTitle(finalTitle);
 
       // Ensure dates are correct
       const finalDates = aiProposal.dates || inferredDates;
@@ -1608,22 +1626,23 @@ export default function App() {
         const isSelected = event.location?.name === suggestion.name;
         const newLoc = isSelected ? undefined : suggestion;
         
-        // Update title if it's a generic meal title
         let newTitle = event.title;
+        let newStatus = isSelected 
+           ? (event.category === 'food' ? 'pending-meal' : 'suggestion') as any 
+           : 'confirmed';
+
         const genericTitles = ['Quick Lunch', 'Lunch', 'Dinner', 'Breakfast', 'Meal', 'Food Stop', 'Meal Selection'];
         
         if (!isSelected && (genericTitles.includes(event.title) || event.title.toLowerCase().includes('lunch') || event.title.toLowerCase().includes('dinner'))) {
-          // Store original title in a data attribute or just use a fallback
           if (!event.originalTitle) {
             event.originalTitle = event.title;
           }
           newTitle = suggestion.name;
         } else if (isSelected && event.originalTitle) {
-          // Revert to original title if unselecting
           newTitle = event.originalTitle;
         }
 
-        return { ...event, title: newTitle, location: newLoc };
+        return { ...event, title: newTitle, location: newLoc, status: newStatus };
       }
       return event;
     });
@@ -2408,6 +2427,8 @@ export default function App() {
     const maxHeight = isGrouped ? 300 : 600; // Cap the height
     const calculatedHeight = Math.min(maxHeight, Math.max(minHeight, duration * heightScale));
 
+    const isSuggestion = event.status === 'suggestion' || event.status === 'pending-meal';
+
     return (
       <div 
         id={event.id}
@@ -2416,6 +2437,8 @@ export default function App() {
           "rounded-2xl transition-all relative w-full border p-4 pl-12",
           event.type === 'travel' 
             ? "bg-transparent border-dashed border-slate-200" 
+            : isSuggestion
+            ? "bg-amber-50/50 border-amber-200 border-dashed shadow-sm"
             : "bg-white border-slate-100 shadow-xl shadow-slate-200/50",
           isCurrent && "ring-2 ring-blue-500/30 border-blue-300",
           event.hidden && "opacity-50 grayscale",
@@ -2486,9 +2509,23 @@ export default function App() {
                 {event.title}
               </h4>
               {event.suggestions && event.suggestions.length > 0 && (
-                <span className="text-[8px] font-black text-blue-600 uppercase tracking-tighter bg-blue-50 px-1 rounded border border-blue-100 shrink-0">
-                  Suggestions
-                </span>
+                isSuggestion ? (
+                  <span className="text-[8px] font-black text-amber-600 uppercase tracking-tighter bg-amber-50 px-1 rounded border border-amber-200 shrink-0">
+                    Needs Selection
+                  </span>
+                ) : (
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!expandedEvents.has(event.id)) {
+                        toggleEventExpansion(event.id);
+                      }
+                    }}
+                    className="text-[8px] font-black text-slate-500 uppercase tracking-tighter bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded border border-slate-200 shrink-0 transition-colors"
+                  >
+                    Change
+                  </button>
+                )
               )}
               {event.hidden && (
                 <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200 shrink-0">
@@ -2617,7 +2654,7 @@ export default function App() {
         </div>
 
         {/* Expanded Content */}
-        {expandedEvents.has(event.id) && (
+        {(expandedEvents.has(event.id) || isSuggestion) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}

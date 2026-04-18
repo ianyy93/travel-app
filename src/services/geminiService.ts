@@ -83,7 +83,7 @@ const getRemainingQuota = (modelName: string) => {
 
 export const geminiService = {
   async proposeChanges(
-    // Triggering fresh build with VITE_GEMINI_API_KEY
+    model: string,
     currentItinerary: DayPlan[],
     userPrompt: string,
     mode: GenerationMode = 'full',
@@ -140,44 +140,34 @@ export const geminiService = {
       1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
       3. CORE vs OPTIONAL (CRITICAL):
-         - 'Core Itinerary': ONLY requested events from the prompt (e.g. flights, specific meetings, requested work) and baseline meal placeholders (Breakfast, Lunch, Dinner).
-         - 'Optional Suggestions': ANY AI-suggested activity (e.g., Central Park, Museums), specific restaurant choice, or logistical move (e.g., hotel change).
-         - MANDATORY LINKING (STRICT): Every 'Optional' event MUST have a clear entry in the 'suggestions' array. The event's 'id' MUST match the suggestion's 'relatedId'. If it's not in the 'suggestions' array, it's considered Core and is WRONG if it wasn't requested.
+         - ONLY schedule on the calendar what the user explicitly mentions in their prompt. These MUST have "status": "confirmed".
+         - Everything else you think would be nice goes in the top-level 'suggestions' array ONLY.
+         - For vaguely requested time blocks or placeholder activities, add an event with "status": "suggestion", and MUST provide 3-5 options inside its 'suggestions' array. NEVER add a suggestion directly to the itinerary as a confirmed event!
       4. MEALS (MANDATORY):
-         - Core: Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
-         - Suggestions (STRICT): You MUST provide 3 specific restaurant names for every Breakfast, Lunch, and Dinner. These MUST be included in the top-level 'suggestions' array (linked via 'relatedId'). If a meal is explicitly "taken care of" or "included" in an event, mark it as 'logistics' or remove suggestions for that specific slot.
-         - ASSIGNMENT: If members have different schedules (e.g., some working remote, some attending events), create separate meal events assigned to the relevant members.
+         - Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave 'location' field empty for core placeholders. 
+         - These must have "status": "pending-meal". You MUST provide 3-5 specific restaurant options inside the event's 'suggestions' array.
+         - If a meal is explicitly requested by the user, set "status": "confirmed".
       5. TRAVEL & ROUTES (STRICT): Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (Subway/Bus), or 'drive' (Taxi/Uber). Add travel for EVERY location change, including back-to-back suggested activities. Separate travel for split members is required if they go to different places.
       6. STAYS & LOGISTICS: Every day MUST end with a 'stay'. If members move hotels, explicitly add a 'logistics' or 'stay' event reflecting this change in the itinerary.
       7. FULL DATE RANGE: Include EVERY single day mentioned in the prompt from start to end. Never end the itinerary early; including travel days.
       8. ASSUMPTIONS: List logical assumptions in the 'assumptions' array (e.g. "Assuming everyone stays together at the hotel").
       9. MEMBER ASSIGNMENT (CRITICAL): Assign 'memberIds' strictly as requested. Every member, including pets if mentioned, MUST be assigned to the activities they are attending. For days where members split, ensure events identify who is attending what. Stays and shared meals should usually include 'everyone' unless specified.
-     10. TITLE FORMAT (STRICT): Use exactly "[Place(s)] [Year]" (e.g., "NYC 2026").
+     10. TITLE FORMAT (STRICT): Trip title MUST follow this exact format: "[Primary Destination(s)] [Year]" (e.g., "Tokyo 2026", "NYC & Boston 2026"). Never use words like "Adventure", "Journey", "Trip", "Itinerary", "Arrival", "New". List up to 3 cities separated by " & ". Always include the 4-digit year.
      11. TRIP END: Stop all activities/meals once the return flight or final travel home begins. 
      12. PLACES SHORTLIST: Return a 'shortlist' array of objects (name, category, description, location: {lat, lng}) for all suggested or requested locations mentioned in the itinerary. This ensures the Places tab is populated.
      13. RESERVATIONS & BOOKINGS: If the user's prompt contains flight numbers, hotels, or restaurants already booked, populate the 'flightInfo', 'stays', 'restaurants', or 'experiences' root fields in the JSON response.
     `;
 
-    const models = [
-      "gemini-3-flash-preview",
-      "gemini-3.1-flash-lite-preview",
-      "gemini-2.5-flash-preview",
-      "gemini-2.5-flash-lite-preview"
-    ];
-
-    let lastError = null;
-
-    for (const modelName of models) {
-      try {
-        console.log(`Attempting generation with model: ${modelName}`);
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: userPrompt,
-          config: {
-            systemInstruction,
-            responseMimeType: "application/json",
-            maxOutputTokens: 8000,
-            responseSchema: {
+    try {
+      console.log(`Attempting generation with model: ${model}`);
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+          maxOutputTokens: 8000,
+          responseSchema: {
             type: Type.OBJECT,
             properties: {
               itinerary: {
@@ -255,9 +245,10 @@ export const geminiService = {
                               },
                               required: ["name", "lat", "lng"]
                             }
-                          }
+                          },
+                          status: { type: Type.STRING }
                         },
-                        required: ["id", "type", "category", "title", "startTime", "endTime", "location"]
+                        required: ["id", "type", "category", "title", "startTime", "endTime"]
                       }
                     }
                   },
@@ -397,39 +388,34 @@ export const geminiService = {
       });
 
       const text = response.text;
-        if (!text) {
-          throw new Error("AI returned an empty response.");
-        }
-
-        try {
-          const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
-          const parsed = JSON.parse(jsonrepair(cleaned)) as GeminiProposal;
-          
-          // Add model info
-          parsed.modelInfo = { 
-            name: modelName,
-            quotaRemaining: trackUsage(modelName)
-          };
-          
-          return parsed;
-        } catch (parseError) {
-          console.warn(`Initial JSON parse failed for ${modelName}, attempting repair...`, parseError);
-          const repaired = jsonrepair(text);
-          const parsed = JSON.parse(repaired) as GeminiProposal;
-          parsed.modelInfo = { 
-            name: modelName,
-            quotaRemaining: trackUsage(modelName)
-          };
-          return parsed;
-        }
-      } catch (error: any) {
-        console.warn(`Model ${modelName} failed:`, error.message);
-        lastError = error;
-        // The loop continues to the next model automatically
+      if (!text) {
+        throw new Error("AI returned an empty response.");
       }
-    }
 
-    throw lastError || new Error("All AI models failed or were unavailable. Please try again in a moment.");
+      try {
+        const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
+        const parsed = JSON.parse(jsonrepair(cleaned)) as GeminiProposal;
+        
+        parsed.modelInfo = { 
+          name: model,
+          quotaRemaining: trackUsage(model)
+        };
+        
+        return parsed;
+      } catch (parseError) {
+        console.warn(`Initial JSON parse failed for ${model}, attempting repair...`, parseError);
+        const repaired = jsonrepair(text);
+        const parsed = JSON.parse(repaired) as GeminiProposal;
+        parsed.modelInfo = { 
+          name: model,
+          quotaRemaining: trackUsage(model)
+        };
+        return parsed;
+      }
+    } catch (error: any) {
+      console.warn(`Model ${model} failed:`, error.message);
+      throw error;
+    }
   },
   async refineSuggestions(
     event: any,
