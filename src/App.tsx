@@ -1355,7 +1355,7 @@ export default function App() {
       // If we are in list view, we are likely creating a new trip, so pass an empty itinerary
       const contextItinerary = view === 'list' ? [] : itinerary;
       const contextMembers = members.length > 0 ? members : masterTravellers;
-      const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Auto-fill the rest of my itinerary using my shortlist and logical suggestions.' : aiPrompt);
+      const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Review my current itinerary and create only pending suggestion slots and optional suggestions for open gaps. Do not add confirmed activities unless explicitly requested.' : aiPrompt);
       
       const isNewTrip = view === 'list' || itinerary.length === 0;
       const targetModel = (isNewTrip && mode === 'full') 
@@ -1427,49 +1427,56 @@ export default function App() {
         return true;
       });
 
-      let finalTitle = aiProposal.title || '';
-      
-      const cleanTitle = (t: string) => {
-        let cleaned = t.replace(/Adventure|Journey|Trip|Itinerary|Arrival|New/ig, '').trim();
-        const yearMatch = cleaned.match(/\b(20\d{2})\b/);
-        const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
-        cleaned = cleaned.replace(/\b20\d{2}\b/g, '').replace(/[^a-zA-Z\s&,]/g, '').trim();
-        const parts = cleaned.split(/&|,/).map(s => s.trim()).filter(Boolean);
-        if (parts.length > 0) {
-          return parts.slice(0, 3).join(' & ') + ' ' + year;
+      const normalizeTripTitle = (rawTitle: string | undefined, locations: (string | undefined)[], fallback: string | undefined): string => {
+        const currentYear = new Date().getFullYear().toString();
+        const yearMatch = (rawTitle || '').match(/\b(20\d{2})\b/) || (fallback || '').match(/\b(20\d{2})\b/);
+        const year = yearMatch ? yearMatch[1] : currentYear;
+
+        const cleanPart = (t: string) => {
+          let c = t.replace(/\b(New Trip|New Destination|New Itinerary|New Adventure|New Journey|Untitled Trip|Loading\.\.\.)\b/ig, '');
+          const forbiddenRegex = /\b(Adventure|Journey|Trip|Itinerary|Arrival\s*Day|Arrival|Departure\s*Day|Departure|Drive|Explore|Exploration|Travel|Vacation|Holiday|Weekend|Getaway|Tour|Day\s*\d*)\b/ig;
+          c = c.replace(forbiddenRegex, '');
+          c = c.replace(new RegExp(`\\b${year}\\b`, 'g'), '');
+          c = c.replace(/[^a-zA-Z\s&,-]/g, '').trim(); 
+          c = c.replace(/^[\s&,-]+|[\s&,-]+$/g, ''); 
+          c = c.replace(/\s{2,}/g, ' ');
+          return c;
+        };
+
+        let candidate = cleanPart(rawTitle || '');
+
+        if (!candidate || candidate.length < 3) {
+          candidate = cleanPart(fallback || '');
         }
-        return `New Destination ${year}`;
-      };
 
-      const isGenericTitle = (t: string | undefined) => !t || 
-                            t.toLowerCase().includes('arizona') || 
-                            t.toLowerCase().includes('arrival') || 
-                            t.toLowerCase().includes('new trip') ||
-                            t.toLowerCase().includes('itinerary') ||
-                            t.length < 3;
-
-      if (isGenericTitle(finalTitle)) {
-        const firstDayTitle = aiProposal.itinerary[0]?.title;
-        const hasPlaceInTitle = (t: string | undefined) => t && !isGenericTitle(t);
-        
-        if (hasPlaceInTitle(firstDayTitle)) {
-          finalTitle = firstDayTitle!;
-        } else if (hasPlaceInTitle(tripTitleRef.current)) {
-          finalTitle = tripTitleRef.current;
-        } else {
-          const locations = aiProposal.itinerary.flatMap(d => d.events.map(e => e.location?.name || e.destination?.name)).filter(Boolean);
-          if (locations.length > 0) {
+        if (!candidate || candidate.length < 3) {
+          const validLocs = locations.filter(Boolean) as string[];
+          if (validLocs.length > 0) {
             const counts: Record<string, number> = {};
-            locations.forEach(loc => { counts[loc!] = (counts[loc!] || 0) + 1; });
-            const topLoc = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-            finalTitle = topLoc;
-          } else {
-            finalTitle = 'New Trip';
+            validLocs.forEach(loc => {
+              const city = loc.split(',')[0].trim();
+              counts[city] = (counts[city] || 0) + 1;
+            });
+            const topLocs = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+            const selected = topLocs.slice(0, 2).map(e => cleanPart(e[0])).filter(Boolean);
+            if (selected.length > 0) {
+              candidate = selected.join(' & ');
+            }
           }
         }
-      }
-      
-      finalTitle = cleanTitle(finalTitle);
+
+        if (!candidate || candidate.length < 3) {
+          candidate = 'Untitled Destination';
+        } else {
+          const parts = candidate.split('&').map(s => s.trim()).filter(Boolean);
+          candidate = parts.slice(0, 3).join(' & ');
+        }
+
+        return `${candidate} ${year}`;
+      };
+
+      const allLocations = aiProposal.itinerary.flatMap(d => d.events.map(e => e.location?.name || e.destination?.name));
+      const finalTitle = normalizeTripTitle(aiProposal.title, allLocations, tripTitleRef.current);
 
       // Ensure dates are correct
       const finalDates = aiProposal.dates || inferredDates;

@@ -116,7 +116,7 @@ export const geminiService = {
     } else if (mode === 'navigation') {
       modeInstruction = 'FOCUS ONLY on adding navigation/travel events (drive, walk, transit) between existing activities in the itinerary. Do not add new activities.';
     } else if (mode === 'autofill') {
-      modeInstruction = 'FOCUS ON filling gaps in the current itinerary. Prioritize using places from the provided Shortlist and any other logical suggestions. Add 3 meals per day and activities to fill empty time slots.';
+      modeInstruction = 'FOCUS ON identifying gaps in the itinerary. Add placeholder events ("pending-meal", "suggestion") with 3-5 options based on the Shortlist and logical suggestions. DO NOT invent confirmed activities.';
     }
 
     const systemInstruction = `
