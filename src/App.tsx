@@ -1347,19 +1347,23 @@ export default function App() {
         : 'gemini-3.1-flash-lite-preview';
       
       console.log('AI Action:', mode, 'Model:', targetModel, 'Prompt:', finalPrompt);
+      
+      // Clear existing trip context when creating a brand-new trip from the list view,
+      // otherwise the AI inherits the current trip's data (e.g. Arizona details bleed into NYC).
+      const isCreatingNewTrip = view === 'list' || contextItinerary.length === 0;
       const proposal = await geminiService.proposeChanges(
         targetModel,
-        contextItinerary, 
-        finalPrompt, 
-        mode, 
-        pastTripsSummary, 
-        contextMembers, 
-        shortlist,
-        stays,
-        flightInfo,
-        rentalInfo,
-        restaurants,
-        experiences
+        contextItinerary,
+        finalPrompt,
+        mode,
+        pastTripsSummary,
+        contextMembers,
+        isCreatingNewTrip ? [] : shortlist,
+        isCreatingNewTrip ? [] : stays,
+        isCreatingNewTrip ? null : flightInfo,
+        isCreatingNewTrip ? null : rentalInfo,
+        isCreatingNewTrip ? [] : restaurants,
+        isCreatingNewTrip ? [] : experiences
       );
       console.log('AI Proposal received:', proposal);
       
@@ -1460,7 +1464,10 @@ export default function App() {
       };
 
       const allLocations = aiProposal.itinerary.flatMap(d => d.events.map(e => e.location?.name || e.destination?.name));
-      const finalTitle = normalizeTripTitle(aiProposal.title, allLocations, tripTitleRef.current);
+      // When creating a new trip from the list, don't fall back to the currently-loaded
+      // trip's title (e.g. "Arizona 2026") — use an empty string so the AI title wins.
+      const titleFallback = view === 'list' ? '' : tripTitleRef.current;
+      const finalTitle = normalizeTripTitle(aiProposal.title, allLocations, titleFallback);
 
       // Ensure dates are correct
       const finalDates = aiProposal.dates || inferredDates;
@@ -2398,6 +2405,13 @@ export default function App() {
   // Helper to format date for the day buttons (MMM DD)
   const formatDateButton = (dateStr: string) => {
     try {
+      // Fix: parse ISO dates as local time (not UTC) to avoid timezone-induced day shift
+      const isoMatch = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (isoMatch) {
+        const d = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
+
       // Handle "Tue Jul 28, 2026" or "Jul 28" or "July 28, 2026"
       const clean = dateStr.includes(',') ? dateStr.split(',')[0].trim() : dateStr.trim();
       
@@ -2433,6 +2447,26 @@ export default function App() {
     } catch (e) {
       return dateStr;
     }
+  };
+
+  const formatTripDateRange = (dateStr: string): string => {
+    if (!dateStr || dateStr === 'Dates TBD') return dateStr;
+    // ISO range: "2026-07-28 - 2026-08-02"
+    const isoRange = dateStr.match(/(\d{4})-(\d{2})-(\d{2})\s*[-–]+\s*(\d{4})-(\d{2})-(\d{2})/);
+    if (isoRange) {
+      const start = new Date(Number(isoRange[1]), Number(isoRange[2]) - 1, Number(isoRange[3]));
+      const end   = new Date(Number(isoRange[4]), Number(isoRange[5]) - 1, Number(isoRange[6]));
+      const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const year = isoRange[1];
+      return `${fmt(start)} – ${fmt(end)}, ${year}`;
+    }
+    // Single ISO date
+    const isoSingle = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoSingle) {
+      const d = new Date(Number(isoSingle[1]), Number(isoSingle[2]) - 1, Number(isoSingle[3]));
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    return dateStr;
   };
 
   const isCurrentEvent = (event: TripEvent) => {
@@ -3447,7 +3481,7 @@ export default function App() {
                                   "text-[10px] font-black uppercase tracking-tighter mb-1",
                                   currentTripId === trip.id ? "text-blue-200" : "text-slate-400"
                                 )}>
-                                  {trip.date}
+                                  {formatTripDateRange(trip.date)}
                                 </p>
                                 <h3 className="text-lg font-black tracking-tight leading-tight">{displayTitle}</h3>
                               </div>
