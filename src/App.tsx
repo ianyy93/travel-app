@@ -1862,7 +1862,30 @@ export default function App() {
       });
     });
 
-    const finalEvents = [...nonTravelEvents, ...travelEvents].sort((a, b) => {
+    const keptExistingTravel = existingTravelEvents.filter(existing => {
+      // If the old travel got reused (by exact string ID match or whatever), it's already in travelEvents array.
+      const isReused = travelEvents.some(n => n.id === existing.id);
+      if (isReused) return false;
+      
+      const eStart = toMinutes(existing.startTime);
+      const eEnd = toMinutes(existing.endTime);
+      
+      // Preserve if times are weird/invalid so we don't accidentally wipe user data
+      if (eStart >= eEnd || !existing.startTime || !existing.endTime) return true;
+      
+      // If it overlaps with ANY of the newly calculated routing travel spans, it means it's an obsolete 
+      // edge crossing across our new routing geometry, so drop it!
+      const isOverlapping = travelEvents.some(n => {
+         const nStart = toMinutes(n.startTime);
+         const nEnd = toMinutes(n.endTime);
+         // Returns true if ANY part of the existing event falls within the newly routed gap's boundaries
+         return eStart < nEnd && eEnd > nStart;
+      });
+      
+      return !isOverlapping;
+    });
+
+    const finalEvents = [...nonTravelEvents, ...travelEvents, ...keptExistingTravel].sort((a, b) => {
       const timeA = toMinutes(a.startTime);
       const timeB = toMinutes(b.startTime);
       if (timeA !== timeB) return timeA - timeB;
