@@ -126,7 +126,7 @@ export const geminiService = {
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
       3. CORE vs OPTIONAL (ABSOLUTE RULE - DO NOT BREAK):
          - An event in the itinerary is CONFIRMED ("status": "confirmed") ONLY if the user's prompt EXPLICITLY names it by activity or place name.
-         - LOGISTICS EXCEPTION: If travelers arrive at a hotel/accommodation before a later dinner or activity on the same day, you MAY and SHOULD insert a confirmed hotel-arrival / check-in logistics event even if the user did not explicitly name "check in". This is a necessary structural event.
+         - LOGISTICS EXCEPTION: You MUST insert a confirmed hotel-arrival / check-in logistics event if travelers arrive at a hotel/accommodation before a later dinner or activity on the same day. This is a mandatory structural event even if the user does not explicitly name "check in".
          - If you think an activity is nice but the user did NOT explicitly request it by name, you MUST NOT place it in the itinerary as confirmed. Put it in the ROOT-level 'suggestions' array instead.
          - For unnamed time blocks (e.g., "morning", "afternoon free time"), add a placeholder event with "status": "suggestion" and populate its own 'suggestions' array with 3-5 named options. NEVER pre-select one as the event's location.
          - WRONG example: User says "Plan a 3-day Paris trip" and you add confirmed "Visit Eiffel Tower", "Louvre Museum" - user never asked for these.
@@ -142,7 +142,7 @@ export const geminiService = {
          - The stay MUST have "status": "confirmed", "category": "stay", and a specific named location with coordinates.
          - Even check-out days must still end with a stay pointing to where the travellers sleep that night.
          - On arrival days, this final "stay" requirement is SEPARATE from any "hotel check-in" event you scheduled earlier. Do not skip the final stay just because there was an earlier check-in event.
-         - CORRECT ARRIVAL DAY FLOW: Airport arrival -> transfer to hotel -> hotel check-in / hotel arrival (logistics) -> dinner/activities -> Final Stay.
+         - CORRECT ARRIVAL DAY FLOW (NORMATIVE FORMAT): Airport arrival -> transfer to hotel -> hotel check-in / hotel arrival (logistics) -> dinner/activities -> Final Stay.
          - If members move to a new hotel mid-trip, the new hotel becomes the ending stay for that day.
          - The ONLY exception is the final departure day when the return flight is literally the last event and travellers are flying home that night.
          - WRONG: Last event of Day 3 is "Dinner at Restaurant X" with no stay after it.

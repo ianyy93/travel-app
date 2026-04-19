@@ -1866,6 +1866,9 @@ export default function App() {
       // If the old travel got reused (by exact string ID match or whatever), it's already in travelEvents array.
       const isReused = travelEvents.some(n => n.id === existing.id);
       if (isReused) return false;
+
+      // Drop travel segments directly tied to the event that was just selected/unselected
+      if (existing.id.includes(`-${eventId}-`)) return false;
       
       const eStart = toMinutes(existing.startTime);
       const eEnd = toMinutes(existing.endTime);
