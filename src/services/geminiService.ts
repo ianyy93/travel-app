@@ -124,36 +124,45 @@ export const geminiService = {
       Rules:
       1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
-      3. CORE vs OPTIONAL (ABSOLUTE RULE - DO NOT BREAK):
-         - An event in the itinerary is CONFIRMED ("status": "confirmed") ONLY if the user's prompt EXPLICITLY names it by activity or place name.
-         - LOGISTICS EXCEPTION: You MUST insert a confirmed hotel-arrival / check-in logistics event if travelers arrive at a hotel/accommodation before a later dinner or activity on the same day. This is a mandatory structural event even if the user does not explicitly name "check in".
-         - If you think an activity is nice but the user did NOT explicitly request it by name, you MUST NOT place it in the itinerary as confirmed. Put it in the ROOT-level 'suggestions' array instead.
-         - For unnamed time blocks (e.g., "morning", "afternoon free time"), add a placeholder event with "status": "suggestion" and populate its own 'suggestions' array with 3-5 named options. NEVER pre-select one as the event's location.
-         - WRONG example: User says "Plan a 3-day Paris trip" and you add confirmed "Visit Eiffel Tower", "Louvre Museum" - user never asked for these.
-         - RIGHT example: User says "Plan a 3-day Paris trip" and you add "Morning Activity" placeholder (status: "suggestion", suggestions: [{Eiffel Tower}, {Louvre}, ...]).
-         - RIGHT example: User says "I want to visit the Eiffel Tower on Day 1" and you add confirmed "Visit Eiffel Tower" on Day 1.
-      4. MEALS (MANDATORY):
-         - Include "Breakfast", "Lunch", and "Dinner" for EVERY day. Leave the 'location' field empty for meal placeholders.
-         - These must have "status": "pending-meal". You MUST provide 3-5 specific restaurant options inside the event's 'suggestions' array.
-         - If a meal is explicitly requested by the user, set "status": "confirmed".
-      5. TRAVEL & ROUTES (STRICT): Use 'type: travel' for events connecting locations. Use categories 'walk', 'transit' (Subway/Bus), or 'drive' (Taxi/Uber). Add travel for EVERY location change, including back-to-back suggested activities. Separate travel for split members is required if they go to different places.
-      6. MANDATORY DAY-ENDING STAY (CRITICAL - NEVER SKIP THIS):
-         - Every single day in the itinerary MUST have a 'stay' event as the ABSOLUTE LAST event of that day.
+      3. TIME FORMAT (STRICT): You MUST format \`startTime\` and \`endTime\` EXACTLY as 'HH:MM AM/PM' (e.g. '08:00 AM', '02:30 PM'). Do NOT use ISO dates or 24-hour time for these fields.
+      4. CORE vs OPTIONAL (ABSOLUTE RULE - DO NOT BREAK):
+         - An event in the itinerary is CONFIRMED ("status": "confirmed") ONLY if the user's prompt EXPLICITLY names it by activity or place name AND includes a specific date or time/time-of-day.
+         - If a place is mentioned as "want to visit" but has NO specified date/time in the prompt, DO NOT put it in the itinerary. Put it in the ROOT-level 'shortlist' array and mention it in the ROOT-level 'suggestions' array instead.
+         - LOGISTICS EXCEPTION: You MUST insert a confirmed hotel-arrival / check-in logistics event if travelers arrive at a hotel/accommodation before a later dinner or activity on the same day. This is a mandatory structural event.
+         - If you think an activity is nice but the user did NOT explicitly request it with a date/time, you MUST NOT place it in the itinerary as confirmed. Put it in 'suggestions'.
+      5. MEALS (MANDATORY):
+         - Include "Breakfast", "Lunch", and "Dinner" placeholder tiles for EVERY day (except arrival/departure times where they are on a plane).
+         - These MUST have "status": "pending-meal". You MUST provide EXACTLY 3 specific restaurant options inside the event's 'suggestions' array. Double check that you provided 3 options.
+         - If a SPECIFIC restaurant is explicitly requested by name, set "status": "confirmed".
+      6. TRAVEL & ROUTES: DO NOT generate any events representing travel, transit, driving, flights, or walking. Never use type 'travel' and never create 'activity' events meant for commuting. 
+         - The frontend routing engine will mathematically calculate all commuting times and draw the connecting routes between your activities, meals, and hotels automatically. 
+         - Your job is ONLY to provide the destinations and waypoints (the activities, food, and stays).
+      7. MANDATORY DAY-ENDING STAY:
+         - Every single day MUST have a 'stay' event as the ABSOLUTE LAST event of that day (except the final night if they fly home).
+         - Even if the user checked into the hotel earlier in the afternoon, you MUST create a final "Return to Hotel" event at the end of the day (e.g. 10:00 PM) to close the loop so the front-end can draw a route back to the hotel.
          - The stay MUST have "status": "confirmed", "category": "stay", and a specific named location with coordinates.
-         - Even check-out days must still end with a stay pointing to where the travellers sleep that night.
-         - On arrival days, this final "stay" requirement is SEPARATE from any "hotel check-in" event you scheduled earlier. Do not skip the final stay just because there was an earlier check-in event.
-         - CORRECT ARRIVAL DAY FLOW (NORMATIVE FORMAT): Airport arrival -> transfer to hotel -> hotel check-in / hotel arrival (logistics) -> dinner/activities -> Final Stay.
-         - If members move to a new hotel mid-trip, the new hotel becomes the ending stay for that day.
-         - The ONLY exception is the final departure day when the return flight is literally the last event and travellers are flying home that night.
-         - WRONG: Last event of Day 3 is "Dinner at Restaurant X" with no stay after it.
-         - RIGHT: Last event of Day 3 is "Stay: Grand Hyatt Tokyo" (category: "stay", status: "confirmed").
-      7. FULL DATE RANGE: Include EVERY single day mentioned in the prompt from start to end. Never end the itinerary early; include all travel days.
-      8. ASSUMPTIONS: List logical assumptions in the 'assumptions' array (e.g. "Assuming everyone stays together at the hotel").
-      9. MEMBER ASSIGNMENT (CRITICAL): Assign 'memberIds' strictly as requested. Every member, including pets if mentioned, MUST be assigned to the activities they are attending. For days where members split, ensure events identify who is attending what. Stays and shared meals should usually include 'everyone' unless specified.
-     10. TITLE FORMAT (STRICT): Trip title MUST follow this exact format: "[Primary Destination(s)] [Year]" (e.g., "Tokyo 2026", "NYC & Boston 2026"). Never use words like "Adventure", "Journey", "Trip", "Itinerary", "Arrival", "New". List up to 3 cities separated by " & ". Always include the 4-digit year.
-     11. TRIP END: Stop all activities/meals once the return flight or final travel home begins. 
-     12. PLACES SHORTLIST: Return a 'shortlist' array of objects (name, category, description, location: {lat, lng}) for all suggested or requested locations mentioned in the itinerary.
-     13. RESERVATIONS & BOOKINGS: If the user's prompt contains flight numbers, hotels, or restaurants already booked, populate the 'flightInfo', 'stays', 'restaurants', or 'experiences' root fields in the JSON response.
+      8. PRESERVE ITINERARY & FULL DATE RANGE (CRITICAL): You MUST output the ENTIRE itinerary. Include EVERY single day from start to end. Count carefully. 
+         EXAMPLE: Jul 28 - Aug 2 is: Jul 28 (Day 1), Jul 29 (Day 2), Jul 30 (Day 3), Jul 31 (Day 4), Aug 1 (Day 5), Aug 2 (Day 6). 
+         YOU MUST GENERATE 6 OBJECTS IN THE ITINERARY ARRAY. DO NOT END AT AUG 1.
+      9. ASSUMPTIONS: List logical assumptions in 'assumptions'.
+     10. MEMBER ASSIGNMENT (CRITICAL FOR SPLIT VIEW): Assign 'memberIds' strictly as requested. 
+         - If a meal or suggestion applies only to a subset of travellers (e.g., Carrie and Pepper having lunch while Ian is elsewhere), you MUST set the 'memberIds' of that meal/suggestion to match the subset. Do not default to 'everyone'.
+         - If the user says "Carrie and Ian arriving at hotel while Pepper stays at dog park", CREATE TWO SEPARATE EVENTS at the same time with different 'memberIds' arrays. 
+         - EVERY MEMBER MUST BE ASSIGNED: Do not leave any member idle during a split itinerary. If the party splits, ensure ALL members are assigned to their respective concurrent events. 
+         - DO NOT GROUP THEM IF THEY ARE DOING DIFFERENT THINGS. 
+         - If everyone is together, use their names (e.g., ["ian", "carrie", "pepper"]) or a specific list of IDs.
+     11. TITLE FORMAT: The ONLY acceptable format is "[City Name(s)] [Year]" (e.g., "NYC 2026", "Toronto & NYC 2026"). 
+         - ABSOLUTELY NO hotel names, neighborhood names (e.g., Manhattan, Midtown), or words like 'by', 'Hotel', 'Trip'.
+         - WRONG: "four seasons new york downtown & courtyard by marriott new york manhattanmidtown west 2026"
+         - RIGHT: "NYC 2026"
+     12. FLIGHTS & DEPARTURES: 
+         - You MUST schedule the INBOUND arriving flight (e.g., to the destination) on the FIRST day of the trip if mentioned in the prompt. Set "type": "activity" and "category": "flight" and provide the arrival airport under "location".
+         - You MUST schedule the OUTBOUND departure flight back home on the FINAL day of the trip if mentioned. Set "type": "activity" and "category": "flight" and provide the departure airport under "location".
+     13. MEAL SUGGESTIONS: For pending-meal or suggestion events, DO NOT provide a location object for the core event itself. Leave it empty so they don't get routed to until the user explicitly selects one of the nested suggestions.
+     14. PLACES SHORTLIST: Return a 'shortlist' array for all requested or suggested locations.
+     15. RESERVATIONS & BOOKINGS (CRITICAL): If the prompt mentions any flights, hotels, or restaurants, YOU MUST populate the 'flightInfo', 'stays', 'restaurants', and 'experiences' root fields in the JSON response. 
+         - EXAMPLES: "PD 605 03:20 PM YYZ to LGA" -> Extract to flightInfo.outbound. "Four Seasons Hotel" -> Extract to stays: [{ name: "Four Seasons" }].
+         - ALWAYS POPULATE THE \`stays\` ROOT ARRAY IF ANY ACCOMMODATION IS MENTIONED OR INFERRED. DO NOT LEAVE THESE EMPTY IF DATA IS PRESENT.
     `;
 
     try {
@@ -163,8 +172,8 @@ export const geminiService = {
         contents: userPrompt,
         config: {
           systemInstruction,
+          tools: [{ googleSearch: {} }, { urlContext: {} }],
           responseMimeType: "application/json",
-          maxOutputTokens: 8000,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -442,6 +451,7 @@ export const geminiService = {
         contents: "Refine suggestions based on: " + refinePrompt,
         config: {
           systemInstruction,
+          tools: [{ googleSearch: {} }, { urlContext: {} }],
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.ARRAY,
@@ -467,66 +477,5 @@ export const geminiService = {
       console.error("Refine Suggestions Error:", e);
       return [];
     }
-  },
-
-  async extractWizardLogistics(input: string): Promise<any> {
-    if (!GEMINI_KEY) throw new Error("Missing API Key");
-    const system = `Extract travel logistics from the user's input.
-Return JSON with:
-- isRoadTrip (boolean): true if driving from home
-- dates (string | null): Any exact dates found
-- travellers (array of strings): Member names (e.g. "Ian", "Carrie", "Pepper")
-- flights (array of objects): { text: string }
-- stays (array of objects): { name: string, dates: string, lat: number, lng: number }`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
-      contents: input,
-      config: {
-        systemInstruction: system,
-        responseMimeType: "application/json",
-      }
-    });
-    return JSON.parse(jsonrepair(response.text?.replace(/```json\n?|\n?```/g, '').trim() || '{}'));
-  },
-
-  async extractWizardActivities(input: string): Promise<any> {
-    if (!GEMINI_KEY) throw new Error("Missing API Key");
-    const system = `Extract planned activities.
-Return JSON array of objects:
-- title: string
-- startTime: string (HH:MM AM/PM)
-- location: { name: string, lat: number, lng: number }
-- date: string (e.g. "May 15")`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: input,
-      config: {
-        systemInstruction: system,
-        responseMimeType: "application/json",
-      }
-    });
-    return JSON.parse(jsonrepair(response.text?.replace(/```json\n?|\n?```/g, '').trim() || '[]'));
-  },
-
-  async extractWizardShortlist(input: string): Promise<any> {
-    if (!GEMINI_KEY) throw new Error("Missing API Key");
-    const system = `Extract wishlist places to visit.
-Return JSON array of objects:
-- name: string
-- lat: number
-- lng: number
-- description: string`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
-      contents: input,
-      config: {
-        systemInstruction: system,
-        responseMimeType: "application/json",
-      }
-    });
-    return JSON.parse(jsonrepair(response.text?.replace(/```json\n?|\n?```/g, '').trim() || '[]'));
   }
 };

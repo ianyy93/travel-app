@@ -75,7 +75,6 @@ import { getAppleMapsUrl, getGoogleMapsUrl, getDayRouteUrl } from './utils/mapUt
 import { sanitizeForFirestore } from './utils/sanitizeForFirestore';
 import { expandMembers } from './utils/memberUtils';
 import { cn, parseItineraryDate, parseTime, toMinutes } from './lib/utils';
-import { TripWizard } from './TripWizard';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { 
@@ -1178,7 +1177,7 @@ export default function App() {
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [view, setView] = useState<'itinerary' | 'list' | 'travellers' | 'wizard'>('list');
+  const [view, setView] = useState<'itinerary' | 'list' | 'travellers'>('list');
   const [lastTripView, setLastTripView] = useState<'itinerary' | 'list'>('list');
   const [currentTripId, setCurrentTripId] = useState<string>('main');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -1234,12 +1233,6 @@ export default function App() {
   useEffect(() => { experiencesRef.current = experiences; }, [experiences]);
   useEffect(() => { membersRef.current = members; }, [members]);
   useEffect(() => { tripTitleRef.current = tripTitle; }, [tripTitle]);
-
-  const shouldRegenerateNavigationRef = useRef(false);
-
-  // Note: handleGenerateNavigation relies on the LATEST itinerary.
-  // We can't easily hook it right here because handleGenerateNavigation is defined further down.
-  // Instead, we will trigger it in a local effect below handleGenerateNavigation.
 
   const isAdmin = useMemo(() => {
     const admins = ['ianyy93@gmail.com', 'wingin.carrie@gmail.com'];
@@ -1350,9 +1343,7 @@ export default function App() {
       const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Review my current itinerary and create only pending suggestion slots and optional suggestions for open gaps. Do not add confirmed activities unless explicitly requested.' : aiPrompt);
       
       const isNewTrip = view === 'list' || itinerary.length === 0;
-      const targetModel = (isNewTrip && mode === 'full') 
-        ? 'gemini-3-flash-preview' 
-        : 'gemini-3.1-flash-lite-preview';
+      const targetModel = 'gemini-3.1-pro-preview';
       
       console.log('AI Action:', mode, 'Model:', targetModel, 'Prompt:', finalPrompt);
       
@@ -1389,118 +1380,36 @@ export default function App() {
     }
   };
 
-    const handleWizardComplete = async (tripData: any) => {
-    try {
-      const tripTitleRaw = tripData.title || 'New Trip';
-      const newId = tripTitleRaw.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substr(2, 5);
-      const { activities, shortlist, logistics, dates } = tripData;
-      
-      const flightInfo = logistics?.flights?.[0] ? { details: logistics.flights[0].text } : null;
-      const rentalInfo = null;
-      const stays = (logistics?.stays || []).map((s: any) => ({
-        id: Math.random().toString(36).substr(2, 9),
-        name: s.name,
-        dateRange: s.dates,
-        location: { name: s.name, lat: s.lat || 0, lng: s.lng || 0 }
-      }));
-      
-      const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
-      const getInitials = (nameStr: string) => (nameStr || '??').split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
-
-      const assignedMembers = (logistics?.travellers || []).map((t: string, idx: number) => {
-         const existing = masterTravellers.find(m => m.name?.toLowerCase() === t.toLowerCase());
-         if (existing) return existing;
-         return { 
-           id: Math.random().toString(36).substr(2,5), 
-           name: t, 
-           initials: getInitials(t),
-           color: colors[idx % colors.length],
-           role: 'member' 
-         };
-      });
-
-      // Generate a basic day plan from activities
-      const activitiesByDate: Record<string, any[]> = {};
-      (activities || []).forEach((act: any) => {
-        const d = act.date || dates || 'TBA';
-        if (!activitiesByDate[d]) activitiesByDate[d] = [];
-        activitiesByDate[d].push({
-           id: Math.random().toString(36).substr(2, 9),
-           title: act.title,
-           startTime: act.startTime || '10:00 AM',
-           endTime: act.endTime || '11:00 AM',
-           location: act.location || { name: 'Unknown', lat: 0, lng: 0 },
-           status: 'confirmed',
-           category: 'activity',
-           memberIds: ['everyone']
-        });
-      });
-
-      let dayIdCount = 1;
-      const wizardItinerary: DayPlan[] = Object.keys(activitiesByDate).map(d => ({
-        id: dayIdCount++,
-        date: d,
-        title: "Free Day",
-        events: activitiesByDate[d]
-      }));
-
-      // If no activities were parsed, just create one empty day
-      if (wizardItinerary.length === 0) {
-        wizardItinerary.push({
-          id: 1,
-          date: dates || 'TBA',
-          title: "Travel",
-          events: []
-        });
-      }
-
-      const finalShortlist = (shortlist || []).map((item: any) => ({
-        id: Math.random().toString(36).substr(2, 9),
-        name: item.name,
-        type: 'activity',
-        location: { name: item.name, lat: item.lat || 0, lng: item.lng || 0 },
-        addedAt: new Date().toISOString()
-      }));
-
-      await saveToFirestore(wizardItinerary, tripTitleRaw, dates, false, finalShortlist, newId, flightInfo, rentalInfo, stays, [], [], assignedMembers);
-      
-      setCurrentTripId(newId);
-      setItinerary(wizardItinerary);
-      setTripTitle(tripTitleRaw);
-      setTripDates(dates);
-      setShortlist(finalShortlist);
-      setFlightInfo(flightInfo);
-      setRentalInfo(rentalInfo);
-      setStays(stays);
-      setRestaurants([]);
-      setExperiences([]);
-      setMembers(assignedMembers);
-      
-      shouldRegenerateNavigationRef.current = true;
-      setView('itinerary');
-      setAiPrompt('');
-    } catch(e) {
-      console.error(e);
-      alert('Error creating trip from wizard.');
-    }
-  };
-
-  const applyAiProposal = async () => {
+    const applyAiProposal = async () => {
       if (!aiProposal) return;
       
       const firstDayDate = aiProposal.itinerary[0]?.date || '';
       const lastDayDate = aiProposal.itinerary[aiProposal.itinerary.length - 1]?.date || '';
       const inferredDates = firstDayDate && lastDayDate ? `${firstDayDate} - ${lastDayDate}` : '';
 
-      // Filter out rejected suggestions from itinerary
+      // Filter out rejected suggestions and AI-generated travel events from itinerary
       const filteredItinerary = aiProposal.itinerary.map(day => ({
         ...day,
         events: day.events.filter(event => {
+          if (event.type === 'travel') {
+            return false; // Strictly strip out any AI travel hallucinations masquerading as activities
+          }
+          if (!event.location && (event.category === 'transit' || event.category === 'drive' || event.category === 'flight')) {
+            return false; // AI generated an activity of travel category but forgot to give it a location
+          }
+          if (event.title.toLowerCase().startsWith('transit to') || event.title.toLowerCase().startsWith('travel to') || event.title.toLowerCase().startsWith('drive to')) {
+            return false;
+          }
           const suggestion = aiProposal.suggestions?.find(s => s.relatedId === event.id);
           if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
             return false;
           }
           return true;
+        }).map(event => {
+          if (event.status === 'pending-meal' || event.status === 'suggestion') {
+            return { ...event, location: undefined };
+          }
+          return event;
         })
       }));
 
@@ -1526,12 +1435,17 @@ export default function App() {
 
         const cleanPart = (t: string) => {
           let c = t.replace(/\b(New Trip|New Destination|New Itinerary|New Adventure|New Journey|Untitled Trip|Loading\.\.\.)\b/ig, '');
-          const forbiddenRegex = /\b(Adventure|Journey|Trip|Itinerary|Arrival\s*Day|Arrival|Departure\s*Day|Departure|Drive|Explore|Exploration|Travel|Vacation|Holiday|Weekend|Getaway|Tour|Day\s*\d*)\b/ig;
+          const forbiddenRegex = /\b(Adventure|Journey|Trip|Itinerary|Arrival\s*Day|Arrival|Departure\s*Day|Departure|Drive|Explore|Exploration|Travel|Vacation|Holiday|Weekend|Getaway|Tour|Day\s*\d*|Hotel|Courtyard|Marriott|Seasons|Stay|Staycation|In|Inn|Suites|Hilton|Hyatt|Westin|Sheraton|Residence|Towers|Condo|Apartment|Airbnb|Hostel|Motel|Lodge|Resort|Spa)\b/ig;
           c = c.replace(forbiddenRegex, '');
           c = c.replace(new RegExp(`\\b${year}\\b`, 'g'), '');
           c = c.replace(/[^a-zA-Z\s&,-]/g, '').trim(); 
           c = c.replace(/^[\s&,-]+|[\s&,-]+$/g, ''); 
           c = c.replace(/\s{2,}/g, ' ');
+          
+          // Final safety: if it still has "Four" or "by", or it's just garbage, return empty
+          if (c.toLowerCase().includes('four') || c.toLowerCase().includes(' downtown') || c.toLowerCase().includes(' by ')) {
+            return '';
+          }
           return c;
         };
 
@@ -1577,20 +1491,24 @@ export default function App() {
       const finalDates = aiProposal.dates || inferredDates;
 
       if (view === 'list') {
-        // Create a new trip from proposal
-        const newId = finalTitle.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substr(2, 5);
+        const newId = finalTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Math.random().toString(36).substr(2, 5);
         
         const aiShortlist = filteredAiShortlist.map(p => ({
           ...p,
           id: p.id || Math.random().toString(36).substr(2, 9),
           addedAt: new Date().toISOString()
         }));
+
+        let nextItin = filteredItinerary;
+        for (let i = 0; i < nextItin.length; i++) {
+          nextItin = recalculateRoutesAroundEvent(i, '', nextItin, aiProposal.rentalInfo);
+        }
+        const finalizedItinerary = nextItin;
         
-        // Save first, then switch to ensure data is ready for the listener
-        await saveToFirestore(filteredItinerary, finalTitle, finalDates, false, aiShortlist, newId, aiProposal.flightInfo || null, aiProposal.rentalInfo || null, aiProposal.stays || [], aiProposal.restaurants || [], aiProposal.experiences || [], aiProposal.members || []);
+        await saveToFirestore(finalizedItinerary, finalTitle, finalDates, false, aiShortlist, newId, aiProposal.flightInfo || null, aiProposal.rentalInfo || null, aiProposal.stays || [], aiProposal.restaurants || [], aiProposal.experiences || [], aiProposal.members || []);
         
         setCurrentTripId(newId);
-        setItinerary(filteredItinerary);
+        setItinerary(finalizedItinerary);
         setTripTitle(finalTitle);
         setTripDates(finalDates);
         setShortlist(aiShortlist);
@@ -1603,8 +1521,35 @@ export default function App() {
         
         setView('itinerary');
       } else {
+        setTripDates(finalDates);
+        const isValidObj = (obj: any) => {
+          if (!obj) return false;
+          const vals = Object.values(obj);
+          if (vals.length === 0) return false;
+          // Check if at least one property is a non-empty string/number or non-empty object
+          return vals.some(v => {
+            if (typeof v === 'string') return v.trim() !== '';
+            if (typeof v === 'number') return true;
+            if (typeof v === 'object' && v !== null) return Object.values(v).some(inner => typeof inner === 'string' && inner.trim() !== '');
+            return false;
+          });
+        };
+
+        const finalFlightInfo = isValidObj(aiProposal.flightInfo) ? aiProposal.flightInfo : flightInfoRef.current;
+        const finalRentalInfo = isValidObj(aiProposal.rentalInfo) ? aiProposal.rentalInfo : rentalInfoRef.current;
+        const finalStays = (aiProposal.stays && aiProposal.stays.length > 0) ? aiProposal.stays : staysRef.current;
+        const finalRestaurants = (aiProposal.restaurants && aiProposal.restaurants.length > 0) ? aiProposal.restaurants : restaurantsRef.current;
+        const finalExperiences = (aiProposal.experiences && aiProposal.experiences.length > 0) ? aiProposal.experiences : experiencesRef.current;
+        const finalMembers = (aiProposal.members && aiProposal.members.length > 0) ? aiProposal.members : membersRef.current;
+
+        let nextItin = filteredItinerary;
+        for (let i = 0; i < nextItin.length; i++) {
+          nextItin = recalculateRoutesAroundEvent(i, '', nextItin, finalRentalInfo);
+        }
+        const finalizedItinerary = nextItin;
+
         setItineraryHistory(prev => [...prev, itineraryRef.current]);
-        setItinerary(filteredItinerary);
+        setItinerary(finalizedItinerary);
         
         const aiShortlist = filteredAiShortlist.map(p => ({
           ...p,
@@ -1621,14 +1566,15 @@ export default function App() {
         
         setTripTitle(finalTitle);
         setTripDates(finalDates);
-        setFlightInfo(aiProposal.flightInfo || flightInfoRef.current);
-        setRentalInfo(aiProposal.rentalInfo || rentalInfoRef.current);
-        setStays(aiProposal.stays || staysRef.current);
-        setRestaurants(aiProposal.restaurants || restaurantsRef.current);
-        setExperiences(aiProposal.experiences || experiencesRef.current);
-        setMembers(aiProposal.members || membersRef.current);
+
+        setFlightInfo(finalFlightInfo);
+        setRentalInfo(finalRentalInfo);
+        setStays(finalStays);
+        setRestaurants(finalRestaurants);
+        setExperiences(finalExperiences);
+        setMembers(finalMembers);
         
-        saveToFirestore(filteredItinerary, finalTitle, finalDates, false, updatedShortlist, undefined, aiProposal.flightInfo || flightInfoRef.current, aiProposal.rentalInfo || rentalInfoRef.current, aiProposal.stays || staysRef.current, aiProposal.restaurants || restaurantsRef.current, aiProposal.experiences || experiencesRef.current, aiProposal.members || membersRef.current);
+        saveToFirestore(finalizedItinerary, finalTitle, finalDates, false, updatedShortlist, undefined, finalFlightInfo, finalRentalInfo, finalStays, finalRestaurants, finalExperiences, finalMembers);
       }
       
       setAiProposal(null);
@@ -1691,12 +1637,12 @@ export default function App() {
         }
 
         const historyRef = doc(collection(db, 'trips', targetId, 'history'));
-        await setDoc(historyRef, {
+        await setDoc(historyRef, sanitizeForFirestore({
           days: data,
           timestamp: new Date().toISOString(),
-          updatedBy: auth.currentUser.email,
-          title: title || tripTitle
-        });
+          updatedBy: auth.currentUser?.email || 'unknown',
+          title: title || tripTitle || 'Untitled Trip'
+        }));
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, path);
@@ -1736,8 +1682,11 @@ export default function App() {
 
     newItinerary[dayIdx] = { ...day, events: newEvents };
     
-    // Rebuild navigation for this day using the unified routing function
+    // Rebuild navigation for this day and the next day (to update cross-day travel)
     newItinerary = recalculateRoutesAroundEvent(dayIdx, eventId, newItinerary);
+    if (dayIdx + 1 < newItinerary.length) {
+      newItinerary = recalculateRoutesAroundEvent(dayIdx + 1, '', newItinerary);
+    }
     
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
@@ -1861,9 +1810,24 @@ export default function App() {
     return false;
   };
 
-  const recalculateRoutesAroundEvent = (dayIdx: number, eventId: string, inputItin: DayPlan[]) => {
-    const defaultMode = hasRentalInfo ? 'drive' : 'transit';
-    const defaultTitle = hasRentalInfo ? 'Drive' : 'Transit';
+  const getDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    return R * c;
+  };
+
+  const recalculateRoutesAroundEvent = (dayIdx: number, eventId: string, inputItin: DayPlan[], explicitRentalInfo?: any) => {
+    const hasRental = explicitRentalInfo !== undefined ? 
+       !!(explicitRentalInfo.company || explicitRentalInfo.car || explicitRentalInfo.confirmation) :
+       hasRentalInfo;
+    const baseMode = hasRental ? 'drive' : 'transit';
+    const baseTitle = hasRental ? 'Drive' : 'Transit';
 
     const newItin = [...inputItin];
     const day = { ...newItin[dayIdx] };
@@ -1876,13 +1840,11 @@ export default function App() {
     // Wipe and recreate travel events that connect the non-travel events for the day
     const travelEvents: TripEvent[] = [];
     const sortedActivities = [...nonTravelEvents].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
-    const lastEventPerMember: Record<string, TripEvent & { isCrossDay?: boolean }> = {};
+    const lastEventPerMember: Record<string, (TripEvent & { isCrossDay?: boolean }) | null> = {};
 
     const isRoutableEvent = (e: TripEvent) =>
       !e.hidden && !!e.location?.lat && !!e.location?.lng &&
-      (e.status === 'confirmed' ||
-        ((e.status === 'pending-meal' || e.status === 'suggestion') &&
-          e.location.lat !== 0 && e.location.lng !== 0));
+      e.status === 'confirmed';
 
     if (dayIdx > 0) {
       let prevDayIdx = dayIdx - 1;
@@ -1909,10 +1871,14 @@ export default function App() {
 
     const routableActivities = sortedActivities.filter(isRoutableEvent);
 
-    routableActivities.forEach(current => {
-      if (!current.location || !current.location.lat || !current.location.lng) return;
-
+    sortedActivities.forEach(current => {
       const currentMemberIds = expandMembers(current.memberIds, masterTravellers);
+
+      if (!isRoutableEvent(current)) {
+        return;
+      }
+
+      if (!current.location || !current.location.lat || !current.location.lng) return;
 
       currentMemberIds.forEach(mid => {
         const prev = lastEventPerMember[mid];
@@ -1927,45 +1893,71 @@ export default function App() {
 
           if (isDifferentPlace) {
             let startTime = prev.endTime || prev.startTime;
+            let gap = toMinutes(current.startTime) - toMinutes(startTime);
+
             if (prev.isCrossDay) {
-              startTime = "07:30 AM";
+              gap = 999;
+              const currentMin = toMinutes(current.startTime);
+              const travelStartMins = Math.max(0, currentMin - 30);
+              const hrs = Math.floor(travelStartMins / 60);
+              const mins = travelStartMins % 60;
+              const ampm = hrs >= 12 ? 'PM' : 'AM';
+              const h12 = hrs % 12 || 12;
+              startTime = `${h12.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')} ${ampm}`;
             }
             const endTime = current.startTime;
             
-            // Try to find if user customized an existing travel segment for these places
-            const existingNav = existingTravelEvents.find(t => 
-              (t.origin?.name === prevLoc.name || t.destination?.name === currLoc.name)
-            );
+            if (gap >= 5) {
+              // Try to find if user customized an existing travel segment for these exact two events
+              const existingNav = existingTravelEvents.find(t => t.id.startsWith(`nav-${prev.id}-${current.id}`));
 
-            // Re-use or Create
-            let navEvent: TripEvent;
-            if (existingNav) {
-              navEvent = { ...existingNav, startTime, endTime };
-            } else {
-              navEvent = {
-                id: `nav-${prev.id}-${current.id}-${Date.now()}`,
-                type: 'travel',
-                category: defaultMode,
-                title: `${defaultTitle} to ${currLoc.name}`,
-                origin: prevLoc,
-                destination: currLoc,
-                startTime,
-                endTime,
-                memberIds: [mid]
-              };
-            }
+              // Re-use or Create
+              let navEvent: TripEvent;
+              if (existingNav && existingNav.category !== 'flight') { // Don't override flight
+                let reusedTitle = existingNav.title;
+                const oldDest = existingNav.destination?.name || '';
+                if (oldDest && currLoc.name !== oldDest && reusedTitle.endsWith(oldDest)) {
+                  reusedTitle = reusedTitle.substring(0, reusedTitle.length - oldDest.length) + currLoc.name;
+                }
+                navEvent = { ...existingNav, title: reusedTitle, origin: prevLoc, destination: currLoc, startTime, endTime };
+              } else {
+                const distKm = getDistanceKm(prevLoc.lat, prevLoc.lng, currLoc.lat, currLoc.lng);
+                let autoMode = baseMode;
+                let autoTitle = baseTitle;
+                
+                if (distKm > 500) {
+                  autoMode = 'flight';
+                  autoTitle = 'Flight';
+                } else if (distKm < 1.0) {
+                  autoMode = 'walk';
+                  autoTitle = 'Walk';
+                }
 
-            // Aggregate members safely
-            const navMembers = travelEvents.find(t => t.id === navEvent.id) 
-              || travelEvents.find(t => t.origin?.name === navEvent.origin?.name && t.destination?.name === navEvent.destination?.name);
+                navEvent = {
+                  id: `nav-${prev.id}-${current.id}-${Date.now()}`,
+                  type: 'travel',
+                  category: autoMode,
+                  title: `${autoTitle} to ${currLoc.name}`,
+                  origin: prevLoc,
+                  destination: currLoc,
+                  startTime,
+                  endTime,
+                  memberIds: [mid]
+                };
+              }
 
-            if (navMembers) {
-              if (!navMembers.memberIds) navMembers.memberIds = [];
-              if (!navMembers.memberIds.includes(mid)) navMembers.memberIds.push(mid);
-            } else {
-              if (!navEvent.memberIds) navEvent.memberIds = [];
-              if (!navEvent.memberIds.includes(mid)) navEvent.memberIds.push(mid);
-              travelEvents.push(navEvent);
+              // Aggregate members safely
+              const navMembers = travelEvents.find(t => t.id === navEvent.id) 
+                || travelEvents.find(t => t.origin?.name === navEvent.origin?.name && t.destination?.name === navEvent.destination?.name);
+
+              if (navMembers) {
+                if (!navMembers.memberIds) navMembers.memberIds = [];
+                if (!navMembers.memberIds.includes(mid)) navMembers.memberIds.push(mid);
+              } else {
+                if (!navEvent.memberIds) navEvent.memberIds = [];
+                if (!navEvent.memberIds.includes(mid)) navEvent.memberIds.push(mid);
+                travelEvents.push(navEvent);
+              }
             }
           }
         }
@@ -2078,43 +2070,45 @@ export default function App() {
               let startTime = prev.endTime || prev.startTime;
               const endTime = current.startTime;
               
-              // If prev was from a previous day, set startTime to 12:00 AM of current day
-              // to ensure it sorts correctly at the beginning of the day
-              const prevDayIdx = itinerary.findIndex(d => d.events.some(e => e.id === prev.id));
-              const currentDayIdx = itinerary.indexOf(day);
-              if (prevDayIdx !== -1 && prevDayIdx < currentDayIdx) {
-                startTime = "12:00 AM";
-              }
-
-              // Check if we already have a travel event between these two activities for this member
-              const existingNav = travelEvents.find(t => {
-                const tStart = toMinutes(t.startTime);
-                const tEnd = toMinutes(t.endTime || t.startTime);
-                const pEnd = toMinutes(prev.endTime || prev.startTime);
-                const cStart = toMinutes(current.startTime);
-                
-                // It's a match if it's roughly between the two activities and shares at least one location name
-                return (tStart >= pEnd - 10 && tEnd <= cStart + 10) && 
-                       (t.origin?.name === prevLoc.name || t.destination?.name === currLoc.name);
-              });
-
-              if (existingNav) {
-                if (!existingNav.memberIds) existingNav.memberIds = [];
-                if (!existingNav.memberIds.includes(mid)) {
-                  existingNav.memberIds.push(mid);
+              if (toMinutes(endTime) - toMinutes(startTime) >= 5) {
+                // If prev was from a previous day, set startTime to 12:00 AM of current day
+                // to ensure it sorts correctly at the beginning of the day
+                const prevDayIdx = itinerary.findIndex(d => d.events.some(e => e.id === prev.id));
+                const currentDayIdx = itinerary.indexOf(day);
+                if (prevDayIdx !== -1 && prevDayIdx < currentDayIdx) {
+                  startTime = "12:00 AM";
                 }
-              } else {
-                travelEvents.push({
-                  id: `nav-${prev.id}-${current.id}-${mid}-${Date.now()}`,
-                  type: 'travel',
-                  category: defaultMode,
-                  title: `${defaultTitle} to ${currLoc.name}`,
-                  origin: prevLoc,
-                  destination: currLoc,
-                  startTime,
-                  endTime,
-                  memberIds: [mid]
+
+                // Check if we already have a travel event between these two activities for this member
+                const existingNav = travelEvents.find(t => {
+                  const tStart = toMinutes(t.startTime);
+                  const tEnd = toMinutes(t.endTime || t.startTime);
+                  const pEnd = toMinutes(prev.endTime || prev.startTime);
+                  const cStart = toMinutes(current.startTime);
+                  
+                  // It's a match if it's roughly between the two activities and shares at least one location name
+                  return (tStart >= pEnd - 10 && tEnd <= cStart + 10) && 
+                         (t.origin?.name === prevLoc.name || t.destination?.name === currLoc.name);
                 });
+
+                if (existingNav) {
+                  if (!existingNav.memberIds) existingNav.memberIds = [];
+                  if (!existingNav.memberIds.includes(mid)) {
+                    existingNav.memberIds.push(mid);
+                  }
+                } else {
+                  travelEvents.push({
+                    id: `nav-${prev.id}-${current.id}-${mid}-${Date.now()}`,
+                    type: 'travel',
+                    category: defaultMode,
+                    title: `${defaultTitle} to ${currLoc.name}`,
+                    origin: prevLoc,
+                    destination: currLoc,
+                    startTime,
+                    endTime,
+                    memberIds: [mid]
+                  });
+                }
               }
             }
           }
@@ -2138,13 +2132,6 @@ export default function App() {
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
   };
-
-  useEffect(() => {
-    if (shouldRegenerateNavigationRef.current && itinerary.length > 0) {
-      shouldRegenerateNavigationRef.current = false;
-      handleGenerateNavigation();
-    }
-  }, [itinerary, handleGenerateNavigation]);
 
   const handleToggleHide = (dayIdx: number, eventId: string) => {
     let newItinerary = itinerary.map((day, dIdx) => {
@@ -2252,7 +2239,7 @@ export default function App() {
         // Initialize if we have an admin
         if (currentAuthUser && isAdminCheck) {
           console.log("Initializing Main Trip with defaults...");
-          setDoc(tripDoc, { 
+          setDoc(tripDoc, sanitizeForFirestore({ 
             days: ITINERARY_DATA,
             title: 'Arizona 2026',
             dates: 'May 14 - May 19',
@@ -2264,7 +2251,7 @@ export default function App() {
             flightInfo: FLIGHT_DETAILS,
             rentalInfo: RENTAL_DETAILS,
             restaurants: RESTAURANT_DETAILS
-          }).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
+          })).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
         } else {
           setIsLoadingTrip(false);
         }
@@ -2314,7 +2301,7 @@ export default function App() {
           { id: 'carrie', name: 'Carrie', initials: 'C', color: '#db2777' },
           { id: 'pepper', name: 'Pepper', initials: 'P', color: '#ea580c' }
         ];
-        setDoc(travellersDoc, { list: defaults }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/travellers'));
+        setDoc(travellersDoc, sanitizeForFirestore({ list: defaults })).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/travellers'));
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'settings/travellers');
@@ -2447,6 +2434,11 @@ export default function App() {
       newItinerary[dayIdx].events[actIdx] = updated;
       newItinerary = recalculateRoutesAroundEvent(dayIdx, updated.id, newItinerary);
     }
+    
+    if (dayIdx + 1 < newItinerary.length) {
+      newItinerary = recalculateRoutesAroundEvent(dayIdx + 1, '', newItinerary);
+    }
+    
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
     setEditingActivity(null);
@@ -2514,10 +2506,53 @@ export default function App() {
     newItinerary[dayIdx].events.splice(actIdx, 1);
     
     newItinerary = recalculateRoutesAroundEvent(dayIdx, eventId, newItinerary);
+    if (dayIdx + 1 < newItinerary.length) {
+      newItinerary = recalculateRoutesAroundEvent(dayIdx + 1, '', newItinerary);
+    }
     
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
     setEditingActivity(null);
+  };
+
+  const handleAddSuggestionTile = (dayIdx: number) => {
+    if (!isAdmin) return;
+    const title = prompt("What is this suggestion for? (e.g. Morning Free Time, Lunch Options)", "Free Time");
+    if (!title) return;
+    
+    const isMeal = title.toLowerCase().includes('lunch') || title.toLowerCase().includes('dinner') || title.toLowerCase().includes('breakfast');
+    
+    const newEvent: TripEvent = {
+        id: Math.random().toString(36).substring(2, 11),
+        type: 'activity',
+        category: isMeal ? 'food' : 'activity',
+        title,
+        startTime: '10:00 AM',
+        endTime: '11:30 AM',
+        status: isMeal ? 'pending-meal' : 'suggestion',
+        memberIds: ['everyone'],
+        suggestions: [
+            { name: "Option 1", description: "Suggested activity or restaurant", lat: userLoc[0], lng: userLoc[1] },
+            { name: "Option 2", description: "Alternative choice", lat: userLoc[0], lng: userLoc[1] },
+            { name: "Option 3", description: "Another possibility", lat: userLoc[0], lng: userLoc[1] }
+        ]
+    };
+
+    const newItinerary = [...itinerary];
+    newItinerary[dayIdx].events.push(newEvent);
+    // Sort events by time
+    newItinerary[dayIdx].events.sort((a,b) => {
+        const toMin = (t: string) => {
+          const [time, mod] = t.split(' ');
+          let [h, m] = time.split(':').map(Number);
+          if (mod === 'PM' && h < 12) h += 12;
+          if (mod === 'AM' && h === 12) h = 0;
+          return h * 60 + m;
+        };
+        return toMin(a.startTime) - toMin(b.startTime);
+    });
+    setItinerary(newItinerary);
+    saveToFirestore(newItinerary);
   };
 
   const activeDay = itinerary[activeDayIdx];
@@ -2660,12 +2695,13 @@ export default function App() {
     };
 
     const duration = getDurationMinutes(event.startTime, event.endTime);
-    const heightScale = isGrouped ? 0.6 : 1.2; // Reduced scale for grouped events to prevent excessive height
-    const minHeight = isGrouped ? 80 : 100;
+    const heightScale = isGrouped ? 0.7 : 1.2; // Adjusted scale for better split view visibility
+    const minHeight = isGrouped ? 70 : 100;
     const maxHeight = isGrouped ? 300 : 600; // Cap the height
     const calculatedHeight = Math.min(maxHeight, Math.max(minHeight, duration * heightScale));
 
     const isSuggestion = event.status === 'suggestion' || event.status === 'pending-meal';
+    const isMealSuggestion = event.status === 'pending-meal';
 
     return (
       <div 
@@ -2760,7 +2796,7 @@ export default function App() {
               {event.suggestions && event.suggestions.length > 0 && (
                 isSuggestion ? (
                   <span className="text-[8px] font-black text-amber-600 uppercase tracking-tighter bg-amber-50 px-1 rounded border border-amber-200 shrink-0">
-                    Needs Selection
+                    {isMealSuggestion ? 'Select Meal' : 'Needs Selection'}
                   </span>
                 ) : (
                   <button 
@@ -2914,7 +2950,7 @@ export default function App() {
         </div>
 
         {/* Expanded Content */}
-        {(expandedEvents.has(event.id) || isSuggestion) && (
+        {(expandedEvents.has(event.id) || (isSuggestion && !isMealSuggestion)) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
@@ -3020,16 +3056,9 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto h-[100dvh] bg-slate-50 flex flex-col font-sans shadow-2xl overflow-hidden relative">
-      {view === 'wizard' && (
-        <TripWizard 
-          masterTravellers={masterTravellers}
-          onComplete={handleWizardComplete}
-          onCancel={() => setView('list')}
-        />
-      )}
       {/* AI Assistant Panel */}
       <AnimatePresence>
-        {showAiAssistant && view === 'itinerary' && (
+        {showAiAssistant && (
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -3342,15 +3371,7 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {view === 'list' && (
-              <button 
-                onClick={() => setView('wizard')}
-                className="px-4 py-2 bg-blue-600 text-white font-bold rounded-full text-sm hover:bg-blue-700 transition-colors shadow-sm"
-              >
-                + New Trip
-              </button>
-            )}
-            {isAdmin && view === 'itinerary' && (
+            {isAdmin && (
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-full">
                 <button 
                   onClick={() => setShowAiAssistant(!showAiAssistant)}
@@ -3556,7 +3577,7 @@ export default function App() {
           travellers={masterTravellers} 
           onUpdate={(list) => {
             setMasterTravellers(list);
-            setDoc(doc(db, 'settings', 'travellers'), { list }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/travellers'));
+            setDoc(doc(db, 'settings', 'travellers'), sanitizeForFirestore({ list })).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/travellers'));
           }} 
         />
       ) : view === 'list' ? (
@@ -4095,12 +4116,18 @@ export default function App() {
                 </div>
     
                   {isEditing && (
-                    <div className="pl-10">
+                    <div className="pl-10 space-y-2">
                       <button 
                         onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: null })}
                         className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 flex items-center justify-center gap-2 font-bold hover:border-blue-400 hover:text-blue-500 transition-colors"
                       >
                         <Plus className="w-5 h-5" /> Add Event
+                      </button>
+                      <button 
+                        onClick={() => handleAddSuggestionTile(activeDayIdx)}
+                        className="w-full py-3 border-2 border-dashed border-amber-100 rounded-2xl text-amber-400 flex items-center justify-center gap-2 font-bold hover:border-amber-400 hover:text-amber-500 transition-colors bg-amber-50/20"
+                      >
+                        <Sparkles className="w-4 h-4" /> Add Suggestion Tile
                       </button>
                     </div>
                   )}
@@ -4276,7 +4303,7 @@ export default function App() {
                             <div className="p-2 bg-blue-50 rounded-full"><Home className="w-4 h-4 text-blue-600" /></div>
                           </div>
                           <div className="space-y-1 mb-3">
-                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {typeof stay.location === 'object' ? stay.location.name : stay.location}</p>
+                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {stay.location}</p>
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{stay.checkIn} — {stay.checkOut}</p>
                           </div>
                           <div className="flex items-center justify-between pt-2 border-t border-slate-50">
@@ -4340,7 +4367,7 @@ export default function App() {
                             <div className="p-2 bg-blue-50 rounded-full"><Ticket className="w-4 h-4 text-blue-600" /></div>
                           </div>
                           <div className="space-y-1 mb-3">
-                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {(typeof exp.location === 'object' ? exp.location.name : exp.location) || 'TBD'}</p>
+                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {exp.location || 'TBD'}</p>
                             <div className="flex items-center gap-3">
                               <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                                 <Calendar className="w-3 h-3" /> {exp.date}
