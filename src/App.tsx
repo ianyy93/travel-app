@@ -54,7 +54,8 @@ import {
   Route,
   Users,
   Bookmark,
-  Ticket
+  Ticket,
+  Download
 } from 'lucide-react';
 import { 
   ITINERARY_DATA, 
@@ -74,6 +75,7 @@ import { getAppleMapsUrl, getGoogleMapsUrl, getDayRouteUrl } from './utils/mapUt
 import { sanitizeForFirestore } from './utils/sanitizeForFirestore';
 import { expandMembers } from './utils/memberUtils';
 import { cn, parseItineraryDate, parseTime, toMinutes } from './lib/utils';
+import { TripWizard } from './TripWizard';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { 
@@ -1176,7 +1178,7 @@ export default function App() {
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [view, setView] = useState<'itinerary' | 'list' | 'travellers'>('list');
+  const [view, setView] = useState<'itinerary' | 'list' | 'travellers' | 'wizard'>('list');
   const [lastTripView, setLastTripView] = useState<'itinerary' | 'list'>('list');
   const [currentTripId, setCurrentTripId] = useState<string>('main');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -1232,6 +1234,12 @@ export default function App() {
   useEffect(() => { experiencesRef.current = experiences; }, [experiences]);
   useEffect(() => { membersRef.current = members; }, [members]);
   useEffect(() => { tripTitleRef.current = tripTitle; }, [tripTitle]);
+
+  const shouldRegenerateNavigationRef = useRef(false);
+
+  // Note: handleGenerateNavigation relies on the LATEST itinerary.
+  // We can't easily hook it right here because handleGenerateNavigation is defined further down.
+  // Instead, we will trigger it in a local effect below handleGenerateNavigation.
 
   const isAdmin = useMemo(() => {
     const admins = ['ianyy93@gmail.com', 'wingin.carrie@gmail.com'];
@@ -1381,7 +1389,103 @@ export default function App() {
     }
   };
 
-    const applyAiProposal = async () => {
+    const handleWizardComplete = async (tripData: any) => {
+    try {
+      const tripTitleRaw = tripData.title || 'New Trip';
+      const newId = tripTitleRaw.toLowerCase().replace(/\s+/g, '-') + '-' + Math.random().toString(36).substr(2, 5);
+      const { activities, shortlist, logistics, dates } = tripData;
+      
+      const flightInfo = logistics?.flights?.[0] ? { details: logistics.flights[0].text } : null;
+      const rentalInfo = null;
+      const stays = (logistics?.stays || []).map((s: any) => ({
+        id: Math.random().toString(36).substr(2, 9),
+        name: s.name,
+        dateRange: s.dates,
+        location: { name: s.name, lat: s.lat || 0, lng: s.lng || 0 }
+      }));
+      
+      const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
+      const getInitials = (nameStr: string) => (nameStr || '??').split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+
+      const assignedMembers = (logistics?.travellers || []).map((t: string, idx: number) => {
+         const existing = masterTravellers.find(m => m.name?.toLowerCase() === t.toLowerCase());
+         if (existing) return existing;
+         return { 
+           id: Math.random().toString(36).substr(2,5), 
+           name: t, 
+           initials: getInitials(t),
+           color: colors[idx % colors.length],
+           role: 'member' 
+         };
+      });
+
+      // Generate a basic day plan from activities
+      const activitiesByDate: Record<string, any[]> = {};
+      (activities || []).forEach((act: any) => {
+        const d = act.date || dates || 'TBA';
+        if (!activitiesByDate[d]) activitiesByDate[d] = [];
+        activitiesByDate[d].push({
+           id: Math.random().toString(36).substr(2, 9),
+           title: act.title,
+           startTime: act.startTime || '10:00 AM',
+           endTime: act.endTime || '11:00 AM',
+           location: act.location || { name: 'Unknown', lat: 0, lng: 0 },
+           status: 'confirmed',
+           category: 'activity',
+           memberIds: ['everyone']
+        });
+      });
+
+      let dayIdCount = 1;
+      const wizardItinerary: DayPlan[] = Object.keys(activitiesByDate).map(d => ({
+        id: dayIdCount++,
+        date: d,
+        title: "Free Day",
+        events: activitiesByDate[d]
+      }));
+
+      // If no activities were parsed, just create one empty day
+      if (wizardItinerary.length === 0) {
+        wizardItinerary.push({
+          id: 1,
+          date: dates || 'TBA',
+          title: "Travel",
+          events: []
+        });
+      }
+
+      const finalShortlist = (shortlist || []).map((item: any) => ({
+        id: Math.random().toString(36).substr(2, 9),
+        name: item.name,
+        type: 'activity',
+        location: { name: item.name, lat: item.lat || 0, lng: item.lng || 0 },
+        addedAt: new Date().toISOString()
+      }));
+
+      await saveToFirestore(wizardItinerary, tripTitleRaw, dates, false, finalShortlist, newId, flightInfo, rentalInfo, stays, [], [], assignedMembers);
+      
+      setCurrentTripId(newId);
+      setItinerary(wizardItinerary);
+      setTripTitle(tripTitleRaw);
+      setTripDates(dates);
+      setShortlist(finalShortlist);
+      setFlightInfo(flightInfo);
+      setRentalInfo(rentalInfo);
+      setStays(stays);
+      setRestaurants([]);
+      setExperiences([]);
+      setMembers(assignedMembers);
+      
+      shouldRegenerateNavigationRef.current = true;
+      setView('itinerary');
+      setAiPrompt('');
+    } catch(e) {
+      console.error(e);
+      alert('Error creating trip from wizard.');
+    }
+  };
+
+  const applyAiProposal = async () => {
       if (!aiProposal) return;
       
       const firstDayDate = aiProposal.itinerary[0]?.date || '';
@@ -2035,6 +2139,13 @@ export default function App() {
     saveToFirestore(newItinerary);
   };
 
+  useEffect(() => {
+    if (shouldRegenerateNavigationRef.current && itinerary.length > 0) {
+      shouldRegenerateNavigationRef.current = false;
+      handleGenerateNavigation();
+    }
+  }, [itinerary, handleGenerateNavigation]);
+
   const handleToggleHide = (dayIdx: number, eventId: string) => {
     let newItinerary = itinerary.map((day, dIdx) => {
       if (dIdx !== dayIdx) return day;
@@ -2351,6 +2462,26 @@ export default function App() {
     const newShortlist = shortlist.filter(p => p.id !== id);
     setShortlist(newShortlist);
     saveToFirestore(itinerary, tripTitle, tripDates, false, newShortlist);
+  };
+
+  const handleExportItinerary = () => {
+    if (!isAdmin) return;
+    const dataStr = JSON.stringify({ 
+      title: tripTitle, 
+      dates: tripDates, 
+      itinerary, 
+      shortlist,
+      travellers: masterTravellers 
+    }, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${tripTitle ? tripTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'trip'}_export.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleClearHistory = async () => {
@@ -2889,9 +3020,16 @@ export default function App() {
 
   return (
     <div className="max-w-md mx-auto h-[100dvh] bg-slate-50 flex flex-col font-sans shadow-2xl overflow-hidden relative">
+      {view === 'wizard' && (
+        <TripWizard 
+          masterTravellers={masterTravellers}
+          onComplete={handleWizardComplete}
+          onCancel={() => setView('list')}
+        />
+      )}
       {/* AI Assistant Panel */}
       <AnimatePresence>
-        {showAiAssistant && (
+        {showAiAssistant && view === 'itinerary' && (
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -3204,7 +3342,15 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {isAdmin && (
+            {view === 'list' && (
+              <button 
+                onClick={() => setView('wizard')}
+                className="px-4 py-2 bg-blue-600 text-white font-bold rounded-full text-sm hover:bg-blue-700 transition-colors shadow-sm"
+              >
+                + New Trip
+              </button>
+            )}
+            {isAdmin && view === 'itinerary' && (
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-full">
                 <button 
                   onClick={() => setShowAiAssistant(!showAiAssistant)}
@@ -3230,6 +3376,13 @@ export default function App() {
             )}
             {view === 'itinerary' && isAdmin && (
               <div className="flex gap-1">
+                <button 
+                  onClick={handleExportItinerary}
+                  className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-slate-200 transition-all"
+                  title="Export Data"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
                 {itineraryHistory.length > 0 && (
                   <button 
                     onClick={handleUndo}
@@ -4123,7 +4276,7 @@ export default function App() {
                             <div className="p-2 bg-blue-50 rounded-full"><Home className="w-4 h-4 text-blue-600" /></div>
                           </div>
                           <div className="space-y-1 mb-3">
-                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {stay.location}</p>
+                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {typeof stay.location === 'object' ? stay.location.name : stay.location}</p>
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{stay.checkIn} — {stay.checkOut}</p>
                           </div>
                           <div className="flex items-center justify-between pt-2 border-t border-slate-50">
@@ -4187,7 +4340,7 @@ export default function App() {
                             <div className="p-2 bg-blue-50 rounded-full"><Ticket className="w-4 h-4 text-blue-600" /></div>
                           </div>
                           <div className="space-y-1 mb-3">
-                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {exp.location || 'TBD'}</p>
+                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {(typeof exp.location === 'object' ? exp.location.name : exp.location) || 'TBD'}</p>
                             <div className="flex items-center gap-3">
                               <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                                 <Calendar className="w-3 h-3" /> {exp.date}

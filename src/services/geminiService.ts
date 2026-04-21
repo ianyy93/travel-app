@@ -467,5 +467,66 @@ export const geminiService = {
       console.error("Refine Suggestions Error:", e);
       return [];
     }
+  },
+
+  async extractWizardLogistics(input: string): Promise<any> {
+    if (!GEMINI_KEY) throw new Error("Missing API Key");
+    const system = `Extract travel logistics from the user's input.
+Return JSON with:
+- isRoadTrip (boolean): true if driving from home
+- dates (string | null): Any exact dates found
+- travellers (array of strings): Member names (e.g. "Ian", "Carrie", "Pepper")
+- flights (array of objects): { text: string }
+- stays (array of objects): { name: string, dates: string, lat: number, lng: number }`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-lite-preview",
+      contents: input,
+      config: {
+        systemInstruction: system,
+        responseMimeType: "application/json",
+      }
+    });
+    return JSON.parse(jsonrepair(response.text?.replace(/```json\n?|\n?```/g, '').trim() || '{}'));
+  },
+
+  async extractWizardActivities(input: string): Promise<any> {
+    if (!GEMINI_KEY) throw new Error("Missing API Key");
+    const system = `Extract planned activities.
+Return JSON array of objects:
+- title: string
+- startTime: string (HH:MM AM/PM)
+- location: { name: string, lat: number, lng: number }
+- date: string (e.g. "May 15")`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: input,
+      config: {
+        systemInstruction: system,
+        responseMimeType: "application/json",
+      }
+    });
+    return JSON.parse(jsonrepair(response.text?.replace(/```json\n?|\n?```/g, '').trim() || '[]'));
+  },
+
+  async extractWizardShortlist(input: string): Promise<any> {
+    if (!GEMINI_KEY) throw new Error("Missing API Key");
+    const system = `Extract wishlist places to visit.
+Return JSON array of objects:
+- name: string
+- lat: number
+- lng: number
+- description: string`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-lite-preview",
+      contents: input,
+      config: {
+        systemInstruction: system,
+        responseMimeType: "application/json",
+      }
+    });
+    return JSON.parse(jsonrepair(response.text?.replace(/```json\n?|\n?```/g, '').trim() || '[]'));
   }
 };
