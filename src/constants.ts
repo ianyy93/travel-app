@@ -43,7 +43,7 @@ export interface DayPlan {
   events: TripEvent[];
 }
 
-export const TEMPLATE_VERSION = 2; // Increment this when making structural changes to the itinerary
+export const TEMPLATE_VERSION = 5; // Increment this when making structural changes to the itinerary
 
 export const ITINERARY_DATA: DayPlan[] = [
   {
@@ -91,9 +91,9 @@ export const ITINERARY_DATA: DayPlan[] = [
         title: "Quick Lunch",
         description: "To-go or drive-through options near the airport for a fast start.",
         suggestions: [
-          { name: "In-N-Out Burger", lat: 33.4594, lng: -112.0294, description: "Classic drive-through. Very close to the rental center." },
-          { name: "Raising Cane's Chicken Fingers", lat: 33.4485, lng: -111.9261, description: "Fast and reliable drive-through on the way out." },
-          { name: "Chipotle Mexican Grill (Online Order)", lat: 33.4515, lng: -112.0740, description: "Quick to-go pickup near the airport." }
+          { name: "In-N-Out Burger, Phoenix, AZ", lat: 33.4594, lng: -112.0294, description: "Classic drive-through. Very close to the rental center." },
+          { name: "Raising Cane's Chicken Fingers, Phoenix, AZ", lat: 33.4485, lng: -111.9261, description: "Fast and reliable drive-through on the way out." },
+          { name: "Chipotle Mexican Grill, Phoenix, AZ (Online Order)", lat: 33.4515, lng: -112.0740, description: "Quick to-go pickup near the airport." }
         ]
       },
       {
@@ -101,17 +101,56 @@ export const ITINERARY_DATA: DayPlan[] = [
         type: 'travel',
         category: 'drive',
         startTime: "01:15 PM",
-        endTime: "05:15 PM",
-        title: "Drive to Grand Canyon",
-        description: "Approx. 4 hours drive north. Parking Tip: Aim for Visitor Center Parking Lot 1 or 4 for easiest access to Mather Point.",
+        endTime: "01:30 PM",
+        title: "Drive to Trader Joe's",
         origin: { name: "PHX Rental Car Center", lat: 33.4376, lng: -112.0222 },
+        destination: { name: "Trader Joe's, 4821 N 20th St, Phoenix, AZ", lat: 33.509, lng: -112.039 }
+      },
+      {
+        id: "14-4a",
+        type: 'activity',
+        category: 'logistics',
+        startTime: "01:30 PM",
+        endTime: "02:15 PM",
+        title: "Trader Joe's Grocery Run",
+        description: "Stock up on water, snacks, trail mix, and campfire supplies.",
+        location: { name: "Trader Joe's, 4821 N 20th St, Phoenix, AZ", lat: 33.509, lng: -112.039 }
+      },
+      {
+        id: "14-4b",
+        type: 'travel',
+        category: 'drive',
+        startTime: "02:15 PM",
+        endTime: "05:15 PM",
+        title: "Drive to Camp",
+        origin: { name: "Trader Joe's, 4821 N 20th St, Phoenix, AZ", lat: 33.509, lng: -112.039 },
+        destination: { name: "Under Canvas Grand Canyon, 979 Airfield Dr, Williams, AZ 86046", lat: 35.8592, lng: -112.1221 }
+      },
+      {
+        id: "14-4c",
+        type: 'activity',
+        category: 'stay',
+        startTime: "05:15 PM",
+        endTime: "05:45 PM",
+        title: "Check-in at Under Canvas",
+        description: "Get settled, drop off groceries in the tent.",
+        location: { name: "Under Canvas Grand Canyon, 979 Airfield Dr, Williams, AZ 86046", lat: 35.8592, lng: -112.1221 }
+      },
+      {
+        id: "14-5a",
+        type: 'travel',
+        category: 'drive',
+        startTime: "05:45 PM",
+        endTime: "06:15 PM",
+        title: "Drive to Park",
+        origin: { name: "Under Canvas Grand Canyon, 979 Airfield Dr, Williams, AZ 86046", lat: 35.8592, lng: -112.1221 },
         destination: { name: "Mather Point, Grand Canyon Village, AZ 86023", lat: 36.0617, lng: -112.1077 }
       },
       {
         id: "14-5",
         type: 'activity',
         category: 'activity',
-        startTime: "06:30 PM",
+        startTime: "06:15 PM",
         endTime: "07:30 PM",
         title: "Sunset at Mather Point",
         description: "Short Rim Trail walk. Parking: Use Visitor Center Parking Lot 1 (closest) or Lot 4. Dog-friendly area.",

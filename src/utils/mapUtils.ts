@@ -3,8 +3,13 @@ import { Location, TripEvent } from '../constants';
 export const getAppleMapsUrl = (loc: Location) => 
   `https://maps.apple.com/?q=${encodeURIComponent(loc.name)}&ll=${loc.lat},${loc.lng}&t=m`;
 
-export const getGoogleMapsUrl = (loc: Location) => 
-  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`;
+export const getGoogleMapsUrl = (loc: Location) => {
+  if (loc.lat && loc.lng) {
+    // using the base maps URL instead of maps/search/ gives us more control over exact pinging via 'query' combined with 'll' parameter bounding
+    return `https://maps.google.com/?q=${encodeURIComponent(loc.name)}&ll=${loc.lat},${loc.lng}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc.name)}`;
+};
 
 export const getDayRouteUrl = (events: TripEvent[], provider: 'apple' | 'google') => {
   // Collect all unique locations from non-hidden activities (excluding flights)

@@ -124,7 +124,7 @@ export const geminiService = {
       Rules:
       1. RETURN JSON: Strictly follow the schema. Ensure valid JSON.
       2. CATEGORIES: 'flight', 'drive', 'stay', 'activity', 'food', 'walk', 'transit', 'logistics', 'work'.
-      3. TIME FORMAT (STRICT): You MUST format \`startTime\` and \`endTime\` EXACTLY as 'HH:MM AM/PM' (e.g. '08:00 AM', '02:30 PM'). Do NOT use ISO dates or 24-hour time for these fields.
+      3. TIME FORMAT (STRICT): You MUST format \`startTime\` and \`endTime\` EXACTLY as 'HH:MM' in 24-hour format (e.g. '08:00', '14:30'). Do NOT use AM/PM or ISO dates.
       4. CORE vs OPTIONAL (ABSOLUTE RULE - DO NOT BREAK):
          - An event in the itinerary is CONFIRMED ("status": "confirmed") ONLY if the user's prompt EXPLICITLY names it by activity or place name AND includes a specific date or time/time-of-day.
          - If a place is mentioned as "want to visit" but has NO specified date/time in the prompt, DO NOT put it in the itinerary. Put it in the ROOT-level 'shortlist' array and mention it in the ROOT-level 'suggestions' array instead.

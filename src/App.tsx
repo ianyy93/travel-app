@@ -55,7 +55,9 @@ import {
   Users,
   Bookmark,
   Ticket,
-  Download
+  Download,
+  Footprints,
+  Bike
 } from 'lucide-react';
 import { 
   ITINERARY_DATA, 
@@ -76,7 +78,7 @@ import { sanitizeForFirestore } from './utils/sanitizeForFirestore';
 import { expandMembers } from './utils/memberUtils';
 import { cn, parseItineraryDate, parseTime, toMinutes } from './lib/utils';
 import { db, auth } from './firebase';
-import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch, updateDoc } from 'firebase/firestore';
 import { 
   signInWithPopup, 
   signInWithRedirect, 
@@ -90,6 +92,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { weatherService, WeatherInfo } from './services/weatherService';
 import { geminiService, GeminiProposal, GenerationMode } from './services/geminiService';
+import { getRealTravelTimeMins } from './services/routingService';
 import { gasService } from './services/gasService';
 import { Fuel, Share2 } from 'lucide-react';
 
@@ -1822,6 +1825,104 @@ export default function App() {
     return R * c;
   };
 
+  const estimateTravelMinutes = (distKm: number, mode: string) => {
+    switch (mode) {
+      case 'walk': return Math.round((distKm / 5) * 60);
+      case 'bike': return Math.round((distKm / 15) * 60) + 2; // ~15km/h + buffer
+      case 'drive': return Math.round((distKm / 40) * 60) + 5; // Add 5 mins buffer
+      case 'transit': return Math.round((distKm / 20) * 60) + 10; // Add 10 mins buffer
+      case 'flight': return Math.round((distKm / 800) * 60) + 120; // 2h overhead
+      default: return Math.round((distKm / 40) * 60);
+    }
+  };
+
+  const handleUpdateTravelMode = async (dayIdx: number, eventId: string, newMode: 'transit' | 'drive' | 'walk' | 'flight' | 'bike') => {
+    let newItin = [...itinerary];
+    const day = { ...newItin[dayIdx] };
+    newItin[dayIdx] = day;
+    const evIdx = day.events.findIndex(e => e.id === eventId);
+    if (evIdx === -1) return;
+
+    const event = day.events[evIdx];
+    if (event.category === newMode) return;
+
+    const modeLabels: Record<string, string> = {
+      transit: 'Transit',
+      drive: 'Drive',
+      walk: 'Walk',
+      bike: 'Bike',
+      flight: 'Flight'
+    };
+
+    const dist = event.origin && event.destination ? getDistanceKm(event.origin.lat, event.origin.lng, event.destination.lat, event.destination.lng) : 0;
+    let estimatedMins = estimateTravelMinutes(dist, newMode);
+
+    // Try to get real-time OSRM routing
+    if (event.origin && event.destination) {
+      const realMins = await getRealTravelTimeMins(
+        event.origin.lat, event.origin.lng,
+        event.destination.lat, event.destination.lng,
+        newMode
+      );
+      if (realMins !== null) {
+        estimatedMins = realMins + (newMode === 'drive' ? 5 : 0); // 5 min buffer for driving (parking etc)
+      }
+    }
+
+    const oldStartMins = toMinutes(event.startTime);
+    const oldEndMins = toMinutes(event.endTime);
+    const oldDurationMins = Math.max(0, oldEndMins - oldStartMins);
+    const diffMins = estimatedMins - oldDurationMins;
+
+    // Update the travel event itself
+    const updatedEvent = {
+      ...event,
+      category: newMode,
+      title: `${modeLabels[newMode]} to ${event.destination?.name || 'Destination'}`
+    };
+
+    if (updatedEvent.startTime) {
+      const startMins = toMinutes(updatedEvent.startTime);
+      const endMins = startMins + estimatedMins;
+      const hrs = Math.floor(endMins / 60) % 24;
+      const mins = endMins % 60;
+      updatedEvent.endTime = `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+    }
+
+    day.events[evIdx] = updatedEvent;
+
+    // Shift subsequent events if travel duration changes
+    if (Math.abs(diffMins) > 0) {
+      day.events = day.events.map((e, idx) => {
+        // Only shift events that start at or after the OLD end time of this travel segment
+        // and aren't other travel segments (they get rebuilt anyway)
+        if (idx !== evIdx && e.type !== 'travel' && toMinutes(e.startTime) >= oldEndMins) {
+          const shiftTime = (timeStr: string) => {
+            if (!timeStr) return timeStr;
+            const tMins = toMinutes(timeStr) + diffMins;
+            const hrs = Math.floor(Math.max(0, tMins) / 60) % 24;
+            const mins = Math.max(0, tMins) % 60;
+            return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+          };
+          return {
+            ...e,
+            startTime: shiftTime(e.startTime),
+            endTime: shiftTime(e.endTime)
+          };
+        }
+        return e;
+      });
+    }
+    
+    setItinerary(newItin);
+    
+    // Also trigger routing logic to rebuild connecting travel events
+    newItin = recalculateRoutesAroundEvent(dayIdx, eventId, newItin);
+    
+    setItinerary([...newItin]);
+    saveToFirestore(newItin);
+  };
+
   const recalculateRoutesAroundEvent = (dayIdx: number, eventId: string, inputItin: DayPlan[], explicitRentalInfo?: any) => {
     const hasRental = explicitRentalInfo !== undefined ? 
        !!(explicitRentalInfo.company || explicitRentalInfo.car || explicitRentalInfo.confirmation) :
@@ -1901,9 +2002,7 @@ export default function App() {
               const travelStartMins = Math.max(0, currentMin - 30);
               const hrs = Math.floor(travelStartMins / 60);
               const mins = travelStartMins % 60;
-              const ampm = hrs >= 12 ? 'PM' : 'AM';
-              const h12 = hrs % 12 || 12;
-              startTime = `${h12.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')} ${ampm}`;
+              startTime = `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
             }
             const endTime = current.startTime;
             
@@ -1965,33 +2064,7 @@ export default function App() {
       });
     });
 
-    const keptExistingTravel = existingTravelEvents.filter(existing => {
-      // If the old travel got reused (by exact string ID match or whatever), it's already in travelEvents array.
-      const isReused = travelEvents.some(n => n.id === existing.id);
-      if (isReused) return false;
-
-      // Drop travel segments directly tied to the event that was just selected/unselected
-      if (existing.id.includes(`-${eventId}-`)) return false;
-      
-      const eStart = toMinutes(existing.startTime);
-      const eEnd = toMinutes(existing.endTime);
-      
-      // Preserve if times are weird/invalid so we don't accidentally wipe user data
-      if (eStart >= eEnd || !existing.startTime || !existing.endTime) return true;
-      
-      // If it overlaps with ANY of the newly calculated routing travel spans, it means it's an obsolete 
-      // edge crossing across our new routing geometry, so drop it!
-      const isOverlapping = travelEvents.some(n => {
-         const nStart = toMinutes(n.startTime);
-         const nEnd = toMinutes(n.endTime);
-         // Returns true if ANY part of the existing event falls within the newly routed gap's boundaries
-         return eStart < nEnd && eEnd > nStart;
-      });
-      
-      return !isOverlapping;
-    });
-
-    const finalEvents = [...nonTravelEvents, ...travelEvents, ...keptExistingTravel].sort((a, b) => {
+    const finalEvents = [...nonTravelEvents, ...travelEvents].sort((a, b) => {
       const timeA = toMinutes(a.startTime);
       const timeB = toMinutes(b.startTime);
       if (timeA !== timeB) return timeA - timeB;
@@ -2201,8 +2274,21 @@ export default function App() {
       if (snapshot.exists()) {
         const data = snapshot.data();
         
-        // Auto-sync logic is removed to prevent overwriting user data.
-        // TEMPLATE_VERSION is now used only for informational badges if needed.
+        // Auto-sync logic for Day 1 migration
+        if (currentTripId === 'main' && currentAuthUser && isAdminCheck && (data.templateVersion || 0) < TEMPLATE_VERSION) {
+          console.log(`Updating main trip from version ${data.templateVersion || 0} to ${TEMPLATE_VERSION}...`);
+          
+          const newDays = [...data.days];
+          // Replace Day 1 with the new template that includes Trader Joe's and Check-in
+          newDays[0] = ITINERARY_DATA[0];
+
+          updateDoc(tripDoc, {
+             days: newDays,
+             templateVersion: TEMPLATE_VERSION
+          }).catch(err => console.error("Auto-sync error", err));
+          
+          return; // Skip the rest of the execution until the snapshot updates again
+        }
 
         // Trigger local updates if user is not currently editing the title
         if (!isEditingTitle) {
@@ -2871,49 +2957,78 @@ export default function App() {
 
           {/* Location / Travel Details */}
           {event.type === 'travel' ? (
-            <div className="mt-1 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-0">
-                <span className="truncate">{event.origin?.name}</span>
-                <ArrowRight className="w-3 h-3 shrink-0" />
-                <span className="truncate">{event.destination?.name}</span>
-              </div>
-              {event.origin && event.destination && (
-                <div className="flex gap-1 shrink-0">
-                  <a 
-                    href={(() => {
-                      const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
-                      const saddr = event.origin ? encodeURIComponent(event.origin.name) : '';
-                      const daddr = event.destination ? encodeURIComponent(event.destination.name) : '';
-                      let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${event.destination?.lat},${event.destination?.lng}&dirflg=${mode}`;
-                      if (event.waypoints && event.waypoints.length > 0) {
-                        url += `&to=${event.waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
-                      }
-                      return url;
-                    })()}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                    title="Apple Maps Directions"
-                  >
-                    <Navigation className="w-3 h-3" />
-                  </a>
-                  <a 
-                    href={(() => {
-                      const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
-                      const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
-                      return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin?.name || '')}&destination=${encodeURIComponent(event.destination?.name || '')}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
-                    })()}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                    title="Google Maps Directions"
-                  >
-                    <MapIcon className="w-3 h-3" />
-                  </a>
+            <div className="mt-1 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-0">
+                  <span className="truncate">{event.origin?.name}</span>
+                  <ArrowRight className="w-3 h-3 shrink-0" />
+                  <span className="truncate">{event.destination?.name}</span>
                 </div>
-              )}
+                {event.origin && event.destination && (
+                  <div className="flex gap-1 shrink-0">
+                    <a 
+                      href={(() => {
+                        const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
+                        const saddr = event.origin ? encodeURIComponent(event.origin.name) : '';
+                        const daddr = event.destination ? encodeURIComponent(event.destination.name) : '';
+                        let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${event.destination?.lat},${event.destination?.lng}&dirflg=${mode}`;
+                        if (event.waypoints && event.waypoints.length > 0) {
+                          url += `&to=${event.waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
+                        }
+                        return url;
+                      })()}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                      title="Apple Maps Directions"
+                    >
+                      <Navigation className="w-3 h-3" />
+                    </a>
+                    <a 
+                      href={(() => {
+                        const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
+                        const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
+                        return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin?.name || '')}&destination=${encodeURIComponent(event.destination?.name || '')}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
+                      })()}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                      title="Google Maps Directions"
+                    >
+                      <MapIcon className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-1 bg-slate-100/50 p-1 rounded-xl w-fit">
+                {[
+                  { mode: 'walk', icon: <Footprints className="w-3 h-3" /> },
+                  { mode: 'bike', icon: <Bike className="w-3 h-3" /> },
+                  { mode: 'drive', icon: <Car className="w-3 h-3" /> },
+                  { mode: 'transit', icon: <Bus className="w-3 h-3" /> },
+                  { mode: 'flight', icon: <Plane className="w-3 h-3" /> }
+                ].map(({ mode, icon }) => (
+                  <button
+                    key={mode}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleUpdateTravelMode(dayIdx, event.id, mode as any);
+                    }}
+                    className={cn(
+                      "p-1.5 rounded-lg transition-all",
+                      event.category === mode 
+                        ? "bg-white text-blue-600 shadow-sm ring-1 ring-slate-100" 
+                        : "text-slate-400 hover:text-slate-600"
+                    )}
+                    title={`Switch to ${mode}`}
+                  >
+                    {icon}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             event.location && (
@@ -3371,49 +3486,26 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {isAdmin && (
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-full">
-                <button 
-                  onClick={() => setShowAiAssistant(!showAiAssistant)}
-                  className={cn(
-                    "p-2 rounded-full transition-all",
-                    showAiAssistant ? "bg-blue-600 text-white shadow-md" : "text-slate-600 hover:bg-white hover:shadow-sm"
-                  )}
-                  title="AI Assistant"
-                >
-                  <Sparkles className="w-5 h-5" />
-                </button>
-                <button 
-                  onClick={() => setIsEditing(!isEditing)}
-                  className={cn(
-                    "p-2 rounded-full transition-all",
-                    isEditing ? "bg-blue-600 text-white shadow-md" : "text-slate-600 hover:bg-white hover:shadow-sm"
-                  )}
-                  title={isEditing ? "Stop Editing" : "Enable Editing"}
-                >
-                  <Edit2 className="w-5 h-5" />
-                </button>
-              </div>
-            )}
-            {view === 'itinerary' && isAdmin && (
-              <div className="flex gap-1">
-                <button 
-                  onClick={handleExportItinerary}
-                  className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-slate-200 transition-all"
-                  title="Export Data"
-                >
-                  <Download className="w-5 h-5" />
-                </button>
-                {itineraryHistory.length > 0 && (
-                  <button 
-                    onClick={handleUndo}
-                    className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-orange-50 hover:text-orange-600 transition-all"
-                    title="Undo last change"
-                  >
-                    <Undo className="w-5 h-5" />
-                  </button>
+            {view === 'list' && isAdmin && (
+              <button 
+                onClick={() => setShowAiAssistant(!showAiAssistant)}
+                className={cn(
+                  "p-2 rounded-full transition-all",
+                  showAiAssistant ? "bg-blue-600 text-white shadow-md" : "bg-slate-100 text-slate-600 hover:bg-white hover:shadow-sm"
                 )}
-              </div>
+                title="AI Assistant"
+              >
+                <Sparkles className="w-5 h-5" />
+              </button>
+            )}
+            {view === 'itinerary' && isAdmin && itineraryHistory.length > 0 && (
+              <button 
+                onClick={handleUndo}
+                className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-orange-50 hover:text-orange-600 transition-all"
+                title="Undo last change"
+              >
+                <Undo className="w-5 h-5" />
+              </button>
             )}
             {user ? (
               <div className="relative">
@@ -3454,6 +3546,35 @@ export default function App() {
                           <p className="text-xs font-bold text-slate-700 truncate">{user.email}</p>
                         </div>
                         
+                        {isAdmin && view === 'itinerary' && (
+                          <button 
+                            onClick={() => {
+                              setIsEditing(!isEditing);
+                              setShowUserMenu(false);
+                            }}
+                            className={cn(
+                              "w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors",
+                              isEditing ? "text-blue-600 bg-blue-50" : "text-slate-600 hover:bg-slate-50"
+                            )}
+                          >
+                            <Edit2 className="w-4 h-4" />
+                            {isEditing ? "Disable Editing" : "Enable Editing"}
+                          </button>
+                        )}
+
+                        {view === 'itinerary' && (
+                          <button 
+                            onClick={() => {
+                              handleExportItinerary();
+                              setShowUserMenu(false);
+                            }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                          >
+                            <Download className="w-4 h-4" />
+                            Export Data
+                          </button>
+                        )}
+
                         {isAdmin && (
                           <button 
                             onClick={() => {
@@ -3500,6 +3621,16 @@ export default function App() {
                             Edit History
                           </button>
                         )}
+                        
+                        <div className="border-t border-slate-50 mt-1">
+                          <button 
+                            onClick={() => handleLogout()}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50 transition-colors"
+                          >
+                            <LogOut className="w-4 h-4" />
+                            Sign Out
+                          </button>
+                        </div>
                       </motion.div>
                     </>
                   )}
@@ -3809,28 +3940,6 @@ export default function App() {
                     )}
                   </div>
                   <div className="flex gap-2">
-                    {isAdmin && (
-                      <div className="flex gap-1">
-                        <button 
-                          onClick={handleGenerateNavigation}
-                          className="p-2 bg-blue-50 rounded-xl text-blue-600 hover:bg-blue-100 transition-colors"
-                          title="Generate Navigation"
-                        >
-                          <Route className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => {
-                            if (window.confirm('Auto-fill the rest of your itinerary? This will use your shortlisted places and logical suggestions to complete the plan.')) {
-                              handleAiAction('autofill');
-                            }
-                          }}
-                          className="p-2 bg-blue-50 rounded-xl text-blue-600 hover:bg-blue-100 transition-colors"
-                          title="Auto-fill Itinerary"
-                        >
-                          <Sparkles className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
                     <a 
                       href={getDayRouteUrl(activeDay.events, 'apple') || '#'} 
                       target="_blank" 
