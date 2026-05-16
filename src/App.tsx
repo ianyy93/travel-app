@@ -2274,13 +2274,14 @@ export default function App() {
       if (snapshot.exists()) {
         const data = snapshot.data();
         
-        // Auto-sync logic for Day 1 migration
+        // Auto-sync logic for template upgrades
         if (currentTripId === 'main' && currentAuthUser && isAdminCheck && (data.templateVersion || 0) < TEMPLATE_VERSION) {
           console.log(`Updating main trip from version ${data.templateVersion || 0} to ${TEMPLATE_VERSION}...`);
           
           const newDays = [...data.days];
-          // Replace Day 1 with the new template that includes Trader Joe's and Check-in
-          newDays[0] = ITINERARY_DATA[0];
+          // Overwrite with the latest structure from the constants
+          newDays[0] = ITINERARY_DATA[0]; // Day 1
+          newDays[3] = ITINERARY_DATA[3]; // Day 4 (Sedona Day Trip)
 
           updateDoc(tripDoc, {
              days: newDays,

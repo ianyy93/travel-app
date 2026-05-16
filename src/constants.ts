@@ -43,7 +43,7 @@ export interface DayPlan {
   events: TripEvent[];
 }
 
-export const TEMPLATE_VERSION = 5; // Increment this when making structural changes to the itinerary
+export const TEMPLATE_VERSION = 7; // Increment this when making structural changes to the itinerary
 
 export const ITINERARY_DATA: DayPlan[] = [
   {
@@ -489,118 +489,134 @@ export const ITINERARY_DATA: DayPlan[] = [
         type: 'travel',
         category: 'drive',
         startTime: "08:00 AM",
-        endTime: "10:00 AM",
+        endTime: "10:15 AM",
         title: "Drive to Sedona",
-        description: "Approx. 2 hours drive.",
-        origin: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 },
-        destination: { name: "Cathedral Rock Trailhead, Sedona, AZ 86336", lat: 34.8252, lng: -111.7885 }
+        description: "Approx. 2 hours 15 mins drive.",
+        origin: { name: "Four Seasons Resort Scottsdale at Troon North, AZ", lat: 33.7258, lng: -111.8542 },
+        destination: { name: "Mescal Trailhead, Sedona, AZ", lat: 34.9016, lng: -111.8267 }
       },
       {
         id: "17-3",
         type: 'activity',
         category: 'activity',
-        startTime: "10:00 AM",
+        startTime: "10:15 AM",
         endTime: "11:30 AM",
-        title: "Cathedral Rock",
-        description: "One of Sedona's most iconic vortex sites. Parking: Very limited, use Sedona Shuttle if needed.",
-        location: { name: "Cathedral Rock Trailhead, Sedona, AZ 86336", lat: 34.8252, lng: -111.7885 }
-      },
-      {
-        id: "17-3-1",
-        type: 'travel',
-        category: 'drive',
-        startTime: "11:30 AM",
-        endTime: "11:45 AM",
-        title: "Drive to Bell Rock",
-        origin: { name: "Cathedral Rock Trailhead, Sedona, AZ 86336", lat: 34.8252, lng: -111.7885 },
-        destination: { name: "Bell Rock Trailhead, Sedona, AZ 86336", lat: 34.8058, lng: -111.7664 }
-      },
-      {
-        id: "17-3-2",
-        type: 'activity',
-        category: 'activity',
-        startTime: "11:45 AM",
-        endTime: "01:00 PM",
-        title: "Bell Rock",
-        description: "Easy to moderate hiking around this massive red rock formation.",
-        location: { name: "Bell Rock Trailhead, Sedona, AZ 86336", lat: 34.8058, lng: -111.7664 }
-      },
-      {
-        id: "17-3b",
-        type: 'activity',
-        category: 'food',
-        startTime: "01:00 PM",
-        endTime: "02:00 PM",
-        title: "Lunch in Sedona",
-        description: "Try 'The Hudson' for great views or 'Elote Cafe' (if you can get a spot) for upscale Mexican.",
-        location: { name: "Sedona, AZ 86336", lat: 34.8697, lng: -111.7610 }
-      },
-      {
-        id: "17-3-3",
-        type: 'travel',
-        category: 'drive',
-        startTime: "02:00 PM",
-        endTime: "02:15 PM",
-        title: "Drive to Chapel of the Holy Cross",
-        origin: { name: "Sedona, AZ 86336", lat: 34.8697, lng: -111.7610 },
-        destination: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ 86336", lat: 34.8320, lng: -111.7667 }
-      },
-      {
-        id: "17-3-4",
-        type: 'activity',
-        category: 'activity',
-        startTime: "02:15 PM",
-        endTime: "03:00 PM",
-        title: "Chapel of the Holy Cross",
-        description: "Stunning chapel built into the red rocks.",
-        location: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ 86336", lat: 34.8320, lng: -111.7667 }
-      },
-      {
-        id: "17-3-5",
-        type: 'travel',
-        category: 'drive',
-        startTime: "03:00 PM",
-        endTime: "03:15 PM",
-        title: "Drive to Tlaquepaque",
-        origin: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ 86336", lat: 34.8320, lng: -111.7667 },
-        destination: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ 86336", lat: 34.8617, lng: -111.7635 }
-      },
-      {
-        id: "17-3-6",
-        type: 'activity',
-        category: 'activity',
-        startTime: "03:15 PM",
-        endTime: "04:30 PM",
-        title: "Tlaquepaque Arts & Shopping Village",
-        description: "Authentic Mexican-style village with art galleries and craft shops.",
-        location: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ 86336", lat: 34.8617, lng: -111.7635 }
+        title: "Mescal Trailhead",
+        description: "Great hiking area connecting to trails like Chuckwagon and Devil's Bridge. Beautiful red rock scenery. Best to do this first before it gets too hot.",
+        location: { name: "Mescal Trailhead, Sedona, AZ", lat: 34.9016, lng: -111.8267 }
       },
       {
         id: "17-4",
         type: 'travel',
         category: 'drive',
-        startTime: "04:30 PM",
-        endTime: "06:30 PM",
-        title: "Return to Scottsdale",
-        origin: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ 86336", lat: 34.8617, lng: -111.7635 },
-        destination: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
+        startTime: "11:30 AM",
+        endTime: "11:50 AM",
+        title: "Drive to Secret Slickrock",
+        origin: { name: "Mescal Trailhead, Sedona, AZ", lat: 34.9016, lng: -111.8267 },
+        destination: { name: "Secret Slickrock Trailhead, Sedona, AZ", lat: 34.8256, lng: -111.8080 }
       },
       {
-        id: "17-4b",
+        id: "17-5",
+        type: 'activity',
+        category: 'activity',
+        startTime: "11:50 AM",
+        endTime: "12:30 PM",
+        title: "Secret Slickrock Trailhead",
+        description: "Short, easy trail offering stunning views of Cathedral Rock reflected in Oak Creek pools.",
+        location: { name: "Secret Slickrock Trailhead, Sedona, AZ", lat: 34.8256, lng: -111.8080 }
+      },
+      {
+        id: "17-6",
+        type: 'travel',
+        category: 'drive',
+        startTime: "12:30 PM",
+        endTime: "12:45 PM",
+        title: "Drive to McDonald's",
+        origin: { name: "Secret Slickrock Trailhead, Sedona, AZ", lat: 34.8256, lng: -111.8080 },
+        destination: { name: "McDonald's, 2380 W State Route 89A, Sedona, AZ", lat: 34.8635, lng: -111.7946 }
+      },
+      {
+        id: "17-7",
+        type: 'activity',
+        category: 'food',
+        startTime: "12:45 PM",
+        endTime: "01:45 PM",
+        title: "Lunch in Sedona",
+        description: "Grab a bite near West Sedona. The Blue Arches McDonald's is a fun novelty stop.",
+        location: { name: "McDonald's, 2380 W State Route 89A, Sedona, AZ", lat: 34.8635, lng: -111.7946 },
+        suggestions: [
+          { name: "McDonald's (Blue Arches)", lat: 34.8635, lng: -111.7946, description: "The only McDonald's in the world with teal-blue arches to blend in with the red rock scenery." },
+          { name: "The Hudson", lat: 34.8697, lng: -111.7610, description: "Upscale American eatery with great views from the deck." },
+          { name: "Elote Cafe", lat: 34.8698, lng: -111.7608, description: "Highly-rated modern Mexican cuisine (reservations highly recommended)." }
+        ]
+      },
+      {
+        id: "17-8",
+        type: 'travel',
+        category: 'drive',
+        startTime: "01:45 PM",
+        endTime: "01:55 PM",
+        title: "Drive to Tlaquepaque",
+        origin: { name: "McDonald's, 2380 W State Route 89A, Sedona, AZ", lat: 34.8635, lng: -111.7946 },
+        destination: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ", lat: 34.8617, lng: -111.7635 }
+      },
+      {
+        id: "17-9",
+        type: 'activity',
+        category: 'activity',
+        startTime: "01:55 PM",
+        endTime: "03:00 PM",
+        title: "Tlaquepaque Arts & Shopping Village",
+        description: "Authentic Mexican-style village with art galleries, cobblestone paths, and craft shops.",
+        location: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ", lat: 34.8617, lng: -111.7635 }
+      },
+      {
+        id: "17-10",
+        type: 'travel',
+        category: 'drive',
+        startTime: "03:00 PM",
+        endTime: "03:10 PM",
+        title: "Drive to Chapel",
+        origin: { name: "Tlaquepaque Arts & Shopping Village, 336 AZ-179, Sedona, AZ", lat: 34.8617, lng: -111.7635 },
+        destination: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ", lat: 34.8320, lng: -111.7667 }
+      },
+      {
+        id: "17-11",
+        type: 'activity',
+        category: 'activity',
+        startTime: "03:10 PM",
+        endTime: "04:00 PM",
+        title: "Chapel of the Holy Cross",
+        description: "Stunning chapel built directly into the red stone cliffs. Great panoramic views from the south.",
+        location: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ", lat: 34.8320, lng: -111.7667 }
+      },
+      {
+        id: "17-12",
+        type: 'travel',
+        category: 'drive',
+        startTime: "04:00 PM",
+        endTime: "06:00 PM",
+        title: "Return to Scottsdale",
+        description: "Head south on AZ-179 back onto I-17 South.",
+        origin: { name: "Chapel of the Holy Cross, 780 Chapel Rd, Sedona, AZ", lat: 34.8320, lng: -111.7667 },
+        destination: { name: "Four Seasons Resort Scottsdale at Troon North, AZ", lat: 33.7258, lng: -111.8542 }
+      },
+      {
+        id: "17-13",
         type: 'activity',
         category: 'food',
         startTime: "07:30 PM",
         title: "Dinner at Resort",
         description: "Relaxing dinner after the day trip.",
-        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, AZ", lat: 33.7258, lng: -111.8542 }
       },
       {
-        id: "17-5",
+        id: "17-14",
         type: 'activity',
         category: 'stay',
         startTime: "08:30 PM",
         title: "Stay: Four Seasons Scottsdale",
-        location: { name: "Four Seasons Resort Scottsdale at Troon North, 10600 E Crescent Moon Dr, Scottsdale, AZ 85262", lat: 33.7258, lng: -111.8542 }
+        location: { name: "Four Seasons Resort Scottsdale at Troon North, AZ", lat: 33.7258, lng: -111.8542 }
       }
     ]
   },
