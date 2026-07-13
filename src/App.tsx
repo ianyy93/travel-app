@@ -15,6 +15,7 @@ import {
   Sun, 
   Moon, 
   Dog,
+  Compass,
   ArrowRight,
   ArrowLeft,
   Clock,
@@ -1927,7 +1928,7 @@ export default function App() {
     const hasRental = explicitRentalInfo !== undefined ? 
        !!(explicitRentalInfo.company || explicitRentalInfo.car || explicitRentalInfo.confirmation) :
        hasRentalInfo;
-    const baseMode = hasRental ? 'drive' : 'transit';
+    const baseMode: TripCategory = hasRental ? 'drive' : 'transit';
     const baseTitle = hasRental ? 'Drive' : 'Transit';
 
     const newItin = [...inputItin];
@@ -2021,7 +2022,7 @@ export default function App() {
                 navEvent = { ...existingNav, title: reusedTitle, origin: prevLoc, destination: currLoc, startTime, endTime };
               } else {
                 const distKm = getDistanceKm(prevLoc.lat, prevLoc.lng, currLoc.lat, currLoc.lng);
-                let autoMode = baseMode;
+                let autoMode: TripCategory = baseMode;
                 let autoTitle = baseTitle;
                 
                 if (distKm > 500) {
@@ -2354,25 +2355,30 @@ export default function App() {
     });
 
     // Sync History
-    const historyCollection = collection(db, 'trips', currentTripId, 'history');
-    const historyQuery = query(historyCollection, orderBy('timestamp', 'desc'), limit(50));
-    const unsubscribeHistory = onSnapshot(historyQuery, (snapshot) => {
-      if (!isSubscribed) return;
-      const history = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as any[];
-      setDbHistory(history);
-    }, (error) => {
-      if (isSubscribed) handleFirestoreError(error, OperationType.GET, `${path}/history`);
-    });
+    let unsubscribeHistory = () => {};
+    if (isAdmin) {
+      const historyCollection = collection(db, 'trips', currentTripId, 'history');
+      const historyQuery = query(historyCollection, orderBy('timestamp', 'desc'), limit(50));
+      unsubscribeHistory = onSnapshot(historyQuery, (snapshot) => {
+        if (!isSubscribed) return;
+        const history = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as any[];
+        setDbHistory(history);
+      }, (error) => {
+        if (isSubscribed) handleFirestoreError(error, OperationType.GET, `${path}/history`);
+      });
+    } else {
+      setDbHistory([]);
+    }
 
     return () => {
       isSubscribed = false;
       unsubscribeSync();
       unsubscribeHistory();
     };
-  }, [currentTripId, isAuthReady]); // isAdmin removed from deps, checked inside snapshot handler.
+  }, [currentTripId, isAuthReady, isAdmin]);
 
   // Sync Master Travellers
   useEffect(() => {
@@ -3171,7 +3177,7 @@ export default function App() {
   };
 
   return (
-    <div className="max-w-md mx-auto h-[100dvh] bg-slate-50 flex flex-col font-sans shadow-2xl overflow-hidden relative">
+    <div className="w-full md:max-w-none max-w-md mx-auto h-[100dvh] bg-slate-50 flex flex-col font-sans md:shadow-none shadow-2xl overflow-hidden relative" id="app-root">
       {/* AI Assistant Panel */}
       <AnimatePresence>
         {showAiAssistant && (
@@ -3732,7 +3738,7 @@ export default function App() {
                   <div className="sticky top-0 z-10 bg-slate-50/80 backdrop-blur-md py-2 -mx-6 px-6">
                     <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest">{year}</h2>
                   </div>
-                  <div className="grid gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {yearTrips.map(trip => {
                       // Strip year from title for display
                       const displayTitle = trip.title.replace(/\s*\d{4}\s*/g, ' ').trim();
@@ -3825,7 +3831,319 @@ export default function App() {
           )}
         </div>
       ) : (
-        <>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* DESKTOP SPLIT PANE VIEW (ianyy93/AI-tinerary style) */}
+          <div className="hidden md:grid grid-cols-12 flex-1 overflow-hidden h-full">
+            {/* Left Pane: Timeline and Day selection */}
+            <div className="col-span-4 border-r border-slate-100 flex flex-col bg-white overflow-hidden h-full">
+              {/* Day Tabs */}
+              <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Select Day</p>
+                  <p className="text-[10px] font-mono text-indigo-500 font-bold tracking-wider">
+                    {itinerary.length} DAYS
+                  </p>
+                </div>
+                <div className="flex gap-2 overflow-x-auto scrollbar-hide py-1">
+                  {itinerary.map((day, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setActiveDayIdx(i)}
+                      className={cn(
+                        "flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2",
+                        activeDayIdx === i 
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-200" 
+                          : "bg-white text-slate-500 border border-slate-200 hover:bg-slate-50"
+                      )}
+                      title={`View Day ${i + 1}: ${day.date}`}
+                    >
+                      <span className="text-[10px] font-black tracking-tighter whitespace-nowrap">
+                        {formatDateButton(day.date)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Scrollable Timeline */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h2 className="font-display font-bold text-lg text-slate-900 leading-tight">{activeDay?.title || 'Itinerary'}</h2>
+                    <p className="text-xs text-slate-400 font-medium mt-0.5">Day {activeDayIdx + 1} • {activeDay?.date}</p>
+                  </div>
+                </div>
+
+                {/* Vertical timeline of events on activeDay */}
+                {activeDay?.events && activeDay.events.length === 0 ? (
+                  <div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <p className="text-slate-400 text-xs">No events scheduled. Use AI to generate some!</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4 relative pl-4 border-l border-slate-100">
+                    {activeDay?.events.map((event, idx) => (
+                      <div key={event.id || idx} className="relative">
+                        <div className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-blue-600 border-2 border-white shadow-sm" />
+                        <EventTile event={event} dayIdx={activeDayIdx} eventIdx={idx} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Middle Pane: Tab detail contents (Map, shortlist, stays, gas, etc.) */}
+            <div className="col-span-5 bg-slate-50/30 flex flex-col overflow-hidden h-full border-r border-slate-100">
+              {/* Tabs list at top */}
+              <div className="p-4 border-b border-slate-100 bg-white flex items-center justify-around">
+                {[
+                  { id: 'itinerary', label: 'Trip Overview', icon: <Compass className="w-4 h-4" /> },
+                  { id: 'places', label: 'Shortlist', icon: <MapPin className="w-4 h-4" /> },
+                  { id: 'gas', label: 'Gas Stations', icon: <Fuel className="w-4 h-4" /> },
+                  { id: 'info', label: 'Reservations', icon: <Info className="w-4 h-4" /> },
+                ].map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setActiveTab(t.id as any)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                      activeTab === t.id 
+                        ? "bg-indigo-50 text-indigo-600 font-bold border border-indigo-100" 
+                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                    )}
+                  >
+                    {t.icon}
+                    <span>{t.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Scrollable Detail Body */}
+              <div className="flex-1 overflow-y-auto p-4 scrollbar-hide">
+                {activeTab === 'itinerary' && (
+                  <div className="space-y-6">
+                    {/* General Trip Info Card */}
+                    <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
+                      <div>
+                        <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-600 font-bold text-[10px] uppercase tracking-wider">Active Trip</span>
+                        <h3 className="font-display font-bold text-lg text-slate-900 mt-1">{tripTitle}</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">📅 {tripDates}</p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                          <p className="text-slate-400 font-bold uppercase text-[9px]">Total Days</p>
+                          <p className="text-base font-black text-slate-800 mt-1">{itinerary.length} Days</p>
+                        </div>
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                          <p className="text-slate-400 font-bold uppercase text-[9px]">Total Events</p>
+                          <p className="text-base font-black text-slate-800 mt-1">
+                            {itinerary.reduce((acc, d) => acc + (d.events?.length || 0), 0)} Items
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Weather forecast */}
+                    <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                      <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-2">☀️ 10-Day Weather Outlook</h4>
+                      <div className="grid grid-cols-5 gap-2">
+                        {itinerary.map((day, i) => (
+                          <div key={i} className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center flex flex-col items-center">
+                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter truncate w-full">D{i + 1}</p>
+                            {weatherData[i] ? (
+                              <>
+                                <WeatherIcon icon={weatherData[i].icon} className="w-5 h-5 my-1.5 text-blue-500" />
+                                <p className="text-[10px] font-bold text-slate-700 leading-none">{weatherData[i].maxTemp}°</p>
+                                <p className="text-[8px] font-bold text-slate-400 mt-0.5 leading-none">{weatherData[i].minTemp}°</p>
+                              </>
+                            ) : (
+                              <p className="text-[10px] text-slate-300 my-2">-</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'places' && (
+                  <div className="space-y-4">
+                    {shortlist.length === 0 ? (
+                      <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
+                        <p className="text-slate-400 text-xs">No shortlisted places. Chat with assistant to find some!</p>
+                      </div>
+                    ) : (
+                      <div className="grid gap-3">
+                        {shortlist.map((item, idx) => (
+                          <div key={idx} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3">
+                            <div className="h-8 w-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                              <MapPin className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-display font-bold text-sm text-slate-800 leading-tight">{item.name || item.title}</h4>
+                              {item.notes && <p className="text-xs text-slate-500 mt-1 leading-snug">{item.notes}</p>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'gas' && (
+                  <div className="h-[65vh] rounded-2xl overflow-hidden border border-slate-100 bg-white shadow-sm flex flex-col">
+                    <GasPricesView userLoc={userLoc} />
+                  </div>
+                )}
+
+                {activeTab === 'info' && (
+                  <div className="space-y-6">
+                    {/* Flights */}
+                    {flightInfo && (
+                      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                        <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-1.5">✈️ Flight Information</h4>
+                        <div className="space-y-3 text-xs text-slate-600">
+                          {flightInfo.outbound && (
+                            <div className="flex justify-between border-b pb-1">
+                              <span className="font-semibold text-slate-400 uppercase text-[9px]">Outbound Flight</span>
+                              <span className="font-bold text-slate-800">{flightInfo.outbound.number || 'N/A'}</span>
+                            </div>
+                          )}
+                          {flightInfo.return && (
+                            <div className="flex justify-between border-b pb-1">
+                              <span className="font-semibold text-slate-400 uppercase text-[9px]">Return Flight</span>
+                              <span className="font-bold text-slate-800">{flightInfo.return.number || 'N/A'}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Stays */}
+                    {stays && stays.length > 0 && (
+                      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                        <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-1.5">🏨 Stays & Lodging</h4>
+                        <div className="space-y-3">
+                          {stays.map((stay, idx) => (
+                            <div key={idx} className="border-b last:border-0 pb-2 last:pb-0 text-xs">
+                              <p className="font-bold text-slate-800">{stay.name}</p>
+                              <p className="text-slate-400 text-[10px] uppercase font-bold tracking-wider mt-0.5">Confirmation: {stay.confirmationNumber || 'N/A'}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Members */}
+                    {members && members.length > 0 && (
+                      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                        <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-1.5">👥 Trip Members</h4>
+                        <div className="grid grid-cols-2 gap-2">
+                          {members.map((member) => (
+                            <div key={member.id} className="bg-slate-50 p-2 rounded-xl flex items-center gap-2">
+                              <div 
+                                className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black text-white"
+                                style={{ backgroundColor: member.color }}
+                              >
+                                {member.initials}
+                              </div>
+                              <span className="text-xs font-bold text-slate-700 truncate">{member.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* If nothing is available */}
+                    {!flightInfo && !rentalInfo && (!stays || stays.length === 0) && (
+                      <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
+                        <p className="text-slate-400 text-xs">No reservation details available for this trip.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Pane: Persistent AI Assistant Chat */}
+            <div className="col-span-3 bg-white flex flex-col overflow-hidden h-full">
+              <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                  <span className="font-display font-bold text-sm">Magic AI Assistant</span>
+                </div>
+              </div>
+
+              {/* Chat Output Area */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide bg-slate-50/50">
+                {aiProposal ? (
+                  <div className="space-y-3">
+                    <div className="bg-blue-50 rounded-xl p-3 border border-blue-100 text-xs">
+                      <div className="flex justify-between items-start mb-1.5">
+                        <h3 className="font-bold text-blue-900 flex items-center gap-1">
+                          <Wand2 className="w-3.5 h-3.5" /> Proposed Changes
+                        </h3>
+                      </div>
+                      <p className="text-blue-800 italic">"{aiProposal.explanation}"</p>
+                      <div className="flex gap-2 mt-3">
+                        <button 
+                          onClick={applyAiProposal}
+                          className="flex-1 bg-blue-600 text-white py-1.5 rounded-lg text-[10px] font-bold"
+                        >
+                          Apply Changes
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setAiProposal(null);
+                            setRejectedSuggestionIds([]);
+                          }}
+                          className="flex-1 bg-white text-slate-600 py-1.5 rounded-lg text-[10px] font-bold border"
+                        >
+                          Discard
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-slate-400">
+                    <MessageSquare className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                    <p className="text-xs font-semibold leading-relaxed">Tell me what to build or change. I can add activities, suggest items, or auto-fill your plans!</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Prompt Input Box */}
+              <div className="p-3 border-t border-slate-100 bg-white">
+                <div className="relative">
+                  <textarea 
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    placeholder="e.g., 'Add a dinner spot on Day 1'"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 pr-10 text-xs focus:ring-2 focus:ring-blue-500 outline-none resize-none h-16"
+                    disabled={isAiLoading}
+                  />
+                  {isAiLoading ? (
+                    <div className="absolute right-2.5 bottom-2.5">
+                      <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => handleAiAction('full')}
+                      disabled={!aiPrompt.trim()}
+                      className="absolute right-2 bottom-2 p-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg transition"
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* MOBILE VIEW FALLBACK */}
+          <div className="md:hidden flex-1 flex flex-col overflow-hidden h-full">
+            <>
           {/* Day Tabs */}
           {activeTab === 'itinerary' && (
             <div className="space-y-2">
@@ -4507,9 +4825,11 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
-    </>
-  )}
+            </main>
+          </>
+        </div>
+      </div>
+    )}
 
       {/* Modals */}
       <AnimatePresence>
@@ -4622,7 +4942,7 @@ export default function App() {
 
       {/* Bottom Navigation */}
       {view === 'itinerary' && (
-        <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-around items-center z-50">
+        <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto md:hidden bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-around items-center z-50">
           <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")} title="View Itinerary">
             <Calendar className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Itinerary</span>
           </button>

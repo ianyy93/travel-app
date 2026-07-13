@@ -30,7 +30,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
 
       match /history/{historyId} {
-        allow read: if isAdmin();
+        allow read: if true;
         allow write: if isAdmin();
       }
     }
