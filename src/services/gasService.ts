@@ -15,14 +15,9 @@ export const gasService = {
     }
 
     try {
-      // The U.S. Energy Information Administration (EIA) API
-      // Free key available at https://www.eia.gov/opendata/register.php
-      const apiKey = import.meta.env.VITE_EIA_API_KEY || 'DEMO_KEY'; 
-      // Note: If DEMO_KEY doesn't work, it gracefully fails
-      
-      const url = `https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key=${apiKey}&frequency=weekly&data[0]=value&facets[series][]=EMM_EPMR_PTE_SAZ_DPG&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=1`;
-      
-      const response = await fetch(url);
+      // Fetch via backend proxy to bypass CORS/sandboxed iframe fetch blocks and protect the API key
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const response = await fetch(`${origin}/api/gas`);
       if (!response.ok) {
         // If the key is missing or invalid, return a graceful fallback 
         // to avoid breaking the UI for the user.

@@ -17,6 +17,8 @@ import {
   Dog,
   Compass,
   ArrowRight,
+  ZoomIn,
+  ZoomOut,
   ArrowLeft,
   Clock,
   ExternalLink,
@@ -283,17 +285,18 @@ const GasPricesView = ({ userLoc }: { userLoc: [number, number] | null }) => {
   );
 };
 
-const EventIcon = ({ category }: { category: TripCategory }) => {
+const EventIcon = ({ category, className }: { category: TripCategory; className?: string }) => {
+  const cnStr = className || "w-4 h-4";
   switch (category) {
-    case 'flight': return <Plane className="w-4 h-4" />;
-    case 'drive': return <Car className="w-4 h-4" />;
-    case 'stay': return <Moon className="w-4 h-4" />;
-    case 'food': return <Utensils className="w-4 h-4" />;
-    case 'walk': return <MapPin className="w-4 h-4" />;
-    case 'transit': return <Bus className="w-4 h-4" />;
-    case 'work': return <Briefcase className="w-4 h-4" />;
-    case 'activity': return <Sun className="w-4 h-4" />;
-    default: return <Sparkles className="w-4 h-4" />;
+    case 'flight': return <Plane className={cnStr} />;
+    case 'drive': return <Car className={cnStr} />;
+    case 'stay': return <Moon className={cnStr} />;
+    case 'food': return <Utensils className={cnStr} />;
+    case 'walk': return <MapPin className={cnStr} />;
+    case 'transit': return <Bus className={cnStr} />;
+    case 'work': return <Briefcase className={cnStr} />;
+    case 'activity': return <Sun className={cnStr} />;
+    default: return <Sparkles className={cnStr} />;
   }
 };
 
@@ -1169,8 +1172,12 @@ const TravellersView = ({ travellers, onUpdate }: { travellers: TripMember[], on
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'itinerary' | 'gas' | 'info' | 'places'>('itinerary');
-  const [activeDayIdx, setActiveDayIdx] = useState(0);
+  const [activeTab, setActiveTab] = useState<'calendar' | 'places' | 'info'>('calendar');
+  const [calendarViewMode, setCalendarViewMode] = useState<'schedule' | 'grid'>('schedule');
+  const [hourHeight, setHourHeight] = useState<number>(80);
+  const [selectedEventForModal, setSelectedEventForModal] = useState<{ event: TripEvent, dayIdx: number, eventIdx: number } | null>(null);
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
+  const [activeDayIdx, setActiveDayIdx] = useState(-1);
   const [itinerary, setItinerary] = useState<DayPlan[]>(ITINERARY_DATA);
   const [user, setUser] = useState<User | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -1210,9 +1217,9 @@ export default function App() {
   const [rejectedSuggestionIds, setRejectedSuggestionIds] = useState<string[]>([]);
   const [rejectedAssumptionIdxs, setRejectedAssumptionIdxs] = useState<number[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [showAiAssistant, setShowAiAssistant] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState('');
+    const [aiPrompt, setAiPrompt] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const gridScrollContainerRef = useRef<HTMLDivElement>(null);
   const [weatherData, setWeatherData] = useState<Record<number, WeatherInfo>>({});
 
   const [activeFilter, setActiveFilter] = useState<string>('all');
@@ -1347,7 +1354,7 @@ export default function App() {
       const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Review my current itinerary and create only pending suggestion slots and optional suggestions for open gaps. Do not add confirmed activities unless explicitly requested.' : aiPrompt);
       
       const isNewTrip = view === 'list' || itinerary.length === 0;
-      const targetModel = 'gemini-3.1-pro-preview';
+      const targetModel = 'gemini-3.5-flash';
       
       console.log('AI Action:', mode, 'Model:', targetModel, 'Prompt:', finalPrompt);
       
@@ -1373,7 +1380,7 @@ export default function App() {
       setAiProposal(proposal);
       setRejectedSuggestionIds([]); // Reset rejections for new proposal
       setRejectedAssumptionIdxs([]); // Reset assumption rejections for new proposal
-      setShowAiAssistant(true); // Ensure panel is open to show proposal
+      setIsAiAssistantOpen(true); // Ensure panel is open to show proposal
       setAiPrompt('');
     } catch (err) {
       console.error('AI Action Error:', err);
@@ -1583,7 +1590,7 @@ export default function App() {
       
       setAiProposal(null);
       setRejectedSuggestionIds([]);
-      setShowAiAssistant(false);
+      setIsAiAssistantOpen(false);
     };
 
   const saveToFirestore = async (data: DayPlan[], title?: string, dates?: string, isAutoSync = false, currentShortlist?: any[], tripIdOverride?: string, currentFlightInfo?: any, currentRentalInfo?: any, currentStays?: any[], currentRestaurants?: any[], currentExperiences?: any[], currentMembers?: TripMember[]) => {
@@ -2234,10 +2241,14 @@ export default function App() {
 
   // Get user location
   useEffect(() => {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setUserLoc([pos.coords.latitude, pos.coords.longitude]),
-      (err) => console.error("Geolocation failed", err)
-    );
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => setUserLoc([pos.coords.latitude, pos.coords.longitude]),
+        (err) => console.warn("Geolocation failed or denied, using defaults:", err)
+      );
+    } else {
+      console.warn("Geolocation is not supported by this browser.");
+    }
   }, []);
 
   // Auth Effect: Just watches for login/logout
@@ -2429,6 +2440,40 @@ export default function App() {
 
     return () => unsubscribe();
   }, [user]);
+
+  // Scroll to earliest event time in Grid (All Days) view
+  useEffect(() => {
+    if (calendarViewMode === 'grid' && gridScrollContainerRef.current) {
+      let earliestMinutes = 24 * 60; // Start at end of day
+      let foundEvent = false;
+
+      itinerary.forEach(day => {
+        if (day.events) {
+          day.events.forEach(event => {
+            if (event.startTime) {
+              const mins = toMinutes(event.startTime);
+              if (mins < earliestMinutes) {
+                earliestMinutes = mins;
+                foundEvent = true;
+              }
+            }
+          });
+        }
+      });
+
+      // Default to 8 AM if no events or earliest is 0 (keep 1 hour buffer for nice spacing)
+      const targetMinutes = foundEvent ? Math.max(0, earliestMinutes - 60) : 8 * 60;
+      const scrollPosition = (targetMinutes / 60) * hourHeight;
+
+      const timer = setTimeout(() => {
+        if (gridScrollContainerRef.current) {
+          gridScrollContainerRef.current.scrollTop = scrollPosition;
+        }
+      }, 80);
+
+      return () => clearTimeout(timer);
+    }
+  }, [calendarViewMode, hourHeight, itinerary]);
 
   const toggleEventExpansion = (id: string) => {
     setExpandedEvents(prev => {
@@ -2625,9 +2670,9 @@ export default function App() {
         status: isMeal ? 'pending-meal' : 'suggestion',
         memberIds: ['everyone'],
         suggestions: [
-            { name: "Option 1", description: "Suggested activity or restaurant", lat: userLoc[0], lng: userLoc[1] },
-            { name: "Option 2", description: "Alternative choice", lat: userLoc[0], lng: userLoc[1] },
-            { name: "Option 3", description: "Another possibility", lat: userLoc[0], lng: userLoc[1] }
+            { name: "Option 1", description: "Suggested activity or restaurant", lat: userLoc ? userLoc[0] : 34.0489, lng: userLoc ? userLoc[1] : -111.0937 },
+            { name: "Option 2", description: "Alternative choice", lat: userLoc ? userLoc[0] : 34.0489, lng: userLoc ? userLoc[1] : -111.0937 },
+            { name: "Option 3", description: "Another possibility", lat: userLoc ? userLoc[0] : 34.0489, lng: userLoc ? userLoc[1] : -111.0937 }
         ]
     };
 
@@ -2648,7 +2693,6 @@ export default function App() {
     saveToFirestore(newItinerary);
   };
 
-  const activeDay = itinerary[activeDayIdx];
 
   // Check if an event is "current"
   const parseTime = (timeStr: string) => {
@@ -2728,10 +2772,11 @@ export default function App() {
     return dateStr;
   };
 
-  const isCurrentEvent = (event: TripEvent) => {
-    if (!event.startTime || !activeDay) return false;
+  const isCurrentEvent = (event: TripEvent, dayIdx: number) => {
+    if (!event.startTime || dayIdx < 0 || dayIdx >= itinerary.length) return false;
     
-    const activeDate = parseItineraryDate(activeDay.date, tripDates);
+    const day = itinerary[dayIdx];
+    const activeDate = parseItineraryDate(day.date, tripDates);
     if (!activeDate) return false;
     
     // Check if it's the right day
@@ -2763,16 +2808,18 @@ export default function App() {
     dayIdx, 
     eventIdx, 
     isGrouped = false,
-    tabId
+    tabId,
+    isGridMode = false
   }: { 
     event: TripEvent, 
     dayIdx: number, 
     eventIdx: number, 
     isGrouped?: boolean,
     tabId?: string,
+    isGridMode?: boolean,
     key?: string | number
   }) => {
-    const isCurrent = isCurrentEvent(event);
+    const isCurrent = isCurrentEvent(event, dayIdx);
     const expandable = isEventExpandable(event);
 
     const getDurationMinutes = (start?: string, end?: string) => {
@@ -2788,9 +2835,9 @@ export default function App() {
     };
 
     const duration = getDurationMinutes(event.startTime, event.endTime);
-    const heightScale = isGrouped ? 0.7 : 1.2; // Adjusted scale for better split view visibility
+    const heightScale = isGrouped ? 0.7 : 1.2;
     const minHeight = isGrouped ? 70 : 100;
-    const maxHeight = isGrouped ? 300 : 600; // Cap the height
+    const maxHeight = isGrouped ? 300 : 600;
     const calculatedHeight = Math.min(maxHeight, Math.max(minHeight, duration * heightScale));
 
     const isSuggestion = event.status === 'suggestion' || event.status === 'pending-meal';
@@ -2799,9 +2846,17 @@ export default function App() {
     return (
       <div 
         id={event.id}
-        onClick={() => expandable && toggleEventExpansion(event.id)}
+        onClick={() => {
+          if (isGridMode) {
+            setSelectedEventForModal({ event, dayIdx, eventIdx });
+          } else if (expandable) {
+            toggleEventExpansion(event.id);
+          }
+        }}
         className={cn(
-          "rounded-2xl transition-all relative w-full border p-4 pl-12 overflow-hidden",
+          isGridMode 
+            ? "rounded-xl transition-all relative w-full border p-1.5 pl-7 md:p-2 md:pl-8 overflow-hidden"
+            : "rounded-2xl transition-all relative w-full border p-3 pl-10 md:p-4 md:pl-12 overflow-hidden",
           event.type === 'travel' 
             ? "bg-transparent border-dashed border-slate-200" 
             : isSuggestion
@@ -2809,10 +2864,11 @@ export default function App() {
             : "bg-white border-slate-100 shadow-xl shadow-slate-200/50",
           isCurrent && "ring-2 ring-blue-500/30 border-blue-300",
           event.hidden && "opacity-50 grayscale",
-          expandable && "cursor-pointer active:scale-[0.99]"
+          (isGridMode || expandable) && "cursor-pointer active:scale-[0.99]"
         )}
         style={{ 
-          minHeight: isGrouped ? `${calculatedHeight}px` : 'auto'
+          minHeight: isGrouped ? `${calculatedHeight}px` : 'auto',
+          height: isGridMode ? '100%' : 'auto'
         }}
       >
         {/* Member Color Stripe */}
@@ -2826,9 +2882,12 @@ export default function App() {
             }}
           />
         )}
+        
         {/* Category Icon - On the edge */}
         <div className={cn(
-          "absolute left-2 top-4 w-8 h-8 rounded-xl flex items-center justify-center border transition-all",
+          isGridMode
+            ? "absolute left-1 top-1.5 w-5 h-5 rounded-md flex items-center justify-center border transition-all"
+            : "absolute left-1.5 top-3 w-7 h-7 md:left-2 md:top-4 md:w-8 md:h-8 rounded-xl flex items-center justify-center border transition-all",
           isCurrent ? "bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-100" : 
           event.type === 'travel' ? "bg-slate-50 border-slate-100 text-slate-400" :
           event.category === 'flight' ? "bg-purple-50 border-purple-100 text-purple-600" :
@@ -2838,20 +2897,23 @@ export default function App() {
           event.category === 'work' ? "bg-blue-50 border-blue-100 text-blue-600" :
           "bg-emerald-50 border-emerald-100 text-emerald-600"
         )}>
-          <EventIcon category={event.category} />
+          <EventIcon category={event.category} className={isGridMode ? "w-3 h-3" : undefined} />
         </div>
         
         {/* Member Initials - Top Right Inside */}
         {(!isGrouped || tabId === 'everyone') && event.memberIds && event.memberIds.length > 0 && (
-          <div className="absolute top-4 right-4 flex -space-x-1.5 z-20">
+          <div className={cn("absolute flex -space-x-1 z-20", isGridMode ? "top-1 right-1" : "top-4 right-4 -space-x-1.5")}>
             {expandMembers(event.memberIds, masterTravellers).map(mid => {
               const member = masterTravellers.find(m => m.id === mid);
               if (!member) return null;
               return (
                 <div 
                   key={mid}
-                  className="w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-[9px] font-black text-white shadow-sm"
-                  style={{ backgroundColor: member.color }}
+                  className={cn(
+                    "rounded-full flex items-center justify-center font-black text-white shadow-sm",
+                    isGridMode ? "w-3.5 h-3.5 text-[6px] border" : "w-6 h-6 text-[9px] border-2 border-white"
+                  )}
+                  style={{ backgroundColor: member.color, borderColor: isGridMode ? 'white' : undefined }}
                   title={member.name}
                 >
                   {member.initials}
@@ -2861,8 +2923,8 @@ export default function App() {
           </div>
         )}
 
-        {/* Edit Button */}
-        {isEditing && isAdmin && eventIdx !== undefined && (
+        {/* Edit Button - Hide in grid view (use details modal instead to prevent overlapping) */}
+        {!isGridMode && isEditing && isAdmin && eventIdx !== undefined && (
           <button 
             onClick={(e) => {
               e.stopPropagation();
@@ -2876,17 +2938,22 @@ export default function App() {
         )}
 
         {/* Content Area */}
-        <div className={cn("flex flex-col gap-0 min-w-0", event.memberIds && event.memberIds.length > 0 ? "pr-20" : "pr-4")}>
+        <div className={cn(
+          "flex flex-col gap-0 min-w-0", 
+          isGridMode 
+            ? (event.memberIds && event.memberIds.length > 0 ? "pr-6" : "pr-1")
+            : (event.memberIds && event.memberIds.length > 0 ? "pr-20" : "pr-4")
+        )}>
           {/* Header: Title & Time */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
               <h4 className={cn(
-                "text-sm font-bold text-slate-800 leading-tight break-words overflow-hidden",
+                isGridMode ? "text-[10.5px] font-black tracking-tight text-slate-800 leading-tight truncate" : "text-sm font-bold text-slate-800 leading-tight break-words overflow-hidden",
                 event.hidden && "line-through"
               )}>
                 {event.title}
               </h4>
-              {event.suggestions && event.suggestions.length > 0 && (
+              {!isGridMode && event.suggestions && event.suggestions.length > 0 && (
                 isSuggestion ? (
                   <span className="text-[8px] font-black text-amber-600 uppercase tracking-tighter bg-amber-50 px-1 rounded border border-amber-200 shrink-0">
                     {isMealSuggestion ? 'Select Meal' : 'Needs Selection'}
@@ -2905,49 +2972,58 @@ export default function App() {
                   </button>
                 )
               )}
-              {event.hidden && (
+              {!isGridMode && event.hidden && (
                 <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter bg-slate-100 px-1 rounded border border-slate-200 shrink-0">
                   Cancelled
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {event.status === 'confirmed' && event.type === 'activity' && (!event.location || event.location.lat === undefined || event.location.lng === undefined) && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (isAdmin) setEditingActivity({ dayIdx, actIdx: eventIdx });
-                  }}
-                  className="text-[8px] font-black text-amber-700 uppercase tracking-tighter bg-amber-100 px-1 py-0.5 rounded border border-amber-300 transition-colors hover:bg-amber-200 flex items-center gap-1"
-                >
-                  <MapPin className="w-2.5 h-2.5" /> Missing location — tap to add
-                </button>
-              )}
-              {event.type === 'activity' && (
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleToggleHide(dayIdx, event.id);
-                  }}
-                  className={cn(
-                    "p-1 transition-colors",
-                    event.hidden ? "text-red-500 hover:text-red-600" : "text-slate-400 hover:text-blue-600"
-                  )}
-                  title={event.hidden ? "Restore activity" : "Cancel/Hide activity"}
-                >
-                  {event.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                </button>
-              )}
-            </div>
+            
+            {/* Cancel/Hide Toggle - Hide in grid view to prevent clutter (use details modal instead) */}
+            {!isGridMode && (
+              <div className="flex items-center gap-2 shrink-0">
+                {event.status === 'confirmed' && event.type === 'activity' && (!event.location || event.location.lat === undefined || event.location.lng === undefined) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isAdmin) setEditingActivity({ dayIdx, actIdx: eventIdx });
+                    }}
+                    className="text-[8px] font-black text-amber-700 uppercase tracking-tighter bg-amber-100 px-1 py-0.5 rounded border border-amber-300 transition-colors hover:bg-amber-200 flex items-center gap-1"
+                  >
+                    <MapPin className="w-2.5 h-2.5" /> Missing location — tap to add
+                  </button>
+                )}
+                {event.type === 'activity' && (
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleHide(dayIdx, event.id);
+                    }}
+                    className={cn(
+                      "p-1 transition-colors",
+                      event.hidden ? "text-red-500 hover:text-red-600" : "text-slate-400 hover:text-blue-600"
+                    )}
+                    title={event.hidden ? "Restore activity" : "Cancel/Hide activity"}
+                  >
+                    {event.hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
+          
           {(event.startTime || event.endTime) && (
-            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-              <Clock className="w-2.5 h-2.5" />
-              {event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}
+            <div className={cn(
+              "flex items-center gap-1 font-bold text-slate-400 uppercase tracking-wider",
+              isGridMode ? "text-[8.5px] mt-0.5" : "text-[10px]"
+            )}>
+              <Clock className={isGridMode ? "w-2 h-2 text-slate-400" : "w-2.5 h-2.5"} />
+              <span>{event.startTime}{event.endTime ? ` - ${event.endTime}` : ''}</span>
             </div>
           )}
-          {/* Description */}
-          {event.description && (
+          
+          {/* Description - Hide in grid view to prevent vertical text overflow */}
+          {!isGridMode && event.description && (
             <div className={cn(
               "text-[11px] text-slate-500 mt-1 leading-relaxed",
               !expandedEvents.has(event.id) && "line-clamp-1"
@@ -2963,116 +3039,133 @@ export default function App() {
           )}
 
           {/* Location / Travel Details */}
-          {event.type === 'travel' ? (
-            <div className="mt-1 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-0">
-                  <span className="truncate">{event.origin?.name}</span>
-                  <ArrowRight className="w-3 h-3 shrink-0" />
-                  <span className="truncate">{event.destination?.name}</span>
+          {isGridMode ? (
+            event.type === 'travel' ? (
+              <div className="mt-0.5 flex items-center gap-1 text-[8.5px] font-medium text-slate-500 uppercase tracking-tight truncate">
+                <span>{event.origin?.name}</span>
+                <ArrowRight className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                <span>{event.destination?.name}</span>
+              </div>
+            ) : (
+              event.location && (
+                <div className="mt-0.5 flex items-center gap-1 text-[8.5px] font-medium text-slate-400 truncate">
+                  <MapPin className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                  <span>{event.location.name}</span>
                 </div>
-                {event.origin && event.destination && (
+              )
+            )
+          ) : (
+            event.type === 'travel' ? (
+              <div className="mt-1 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-0">
+                    <span className="truncate">{event.origin?.name}</span>
+                    <ArrowRight className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{event.destination?.name}</span>
+                  </div>
+                  {event.origin && event.destination && (
+                    <div className="flex gap-1 shrink-0">
+                      <a 
+                        href={(() => {
+                          const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
+                          const saddr = event.origin ? encodeURIComponent(event.origin.name) : '';
+                          const daddr = event.destination ? encodeURIComponent(event.destination.name) : '';
+                          let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${event.destination?.lat},${event.destination?.lng}&dirflg=${mode}`;
+                          if (event.waypoints && event.waypoints.length > 0) {
+                            url += `&to=${event.waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
+                          }
+                          return url;
+                        })()}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                        title="Apple Maps Directions"
+                      >
+                        <Navigation className="w-3 h-3" />
+                      </a>
+                      <a 
+                        href={(() => {
+                          const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
+                          const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
+                          return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin?.name || '')}&destination=${encodeURIComponent(event.destination?.name || '')}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
+                        })()}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                        title="Google Maps Directions"
+                      >
+                        <MapIcon className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-1 bg-slate-100/50 p-1 rounded-xl w-fit">
+                  {[
+                    { mode: 'walk', icon: <Footprints className="w-3 h-3" /> },
+                    { mode: 'bike', icon: <Bike className="w-3 h-3" /> },
+                    { mode: 'drive', icon: <Car className="w-3 h-3" /> },
+                    { mode: 'transit', icon: <Bus className="w-3 h-3" /> },
+                    { mode: 'flight', icon: <Plane className="w-3 h-3" /> }
+                  ].map(({ mode, icon }) => (
+                    <button
+                      key={mode}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleUpdateTravelMode(dayIdx, event.id, mode as any);
+                      }}
+                      className={cn(
+                        "p-1.5 rounded-lg transition-all",
+                        event.category === mode 
+                          ? "bg-white text-blue-600 shadow-sm ring-1 ring-slate-100" 
+                          : "text-slate-400 hover:text-slate-600"
+                      )}
+                      title={`Switch to ${mode}`}
+                    >
+                      {icon}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              event.location && (
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-600 uppercase tracking-wider min-w-0">
+                    <MapPin className="w-2.5 h-2.5 shrink-0" />
+                    <span className="truncate">{event.location.name}</span>
+                  </div>
                   <div className="flex gap-1 shrink-0">
                     <a 
-                      href={(() => {
-                        const mode = event.category === 'walk' ? 'w' : event.category === 'transit' ? 'r' : 'd';
-                        const saddr = event.origin ? encodeURIComponent(event.origin.name) : '';
-                        const daddr = event.destination ? encodeURIComponent(event.destination.name) : '';
-                        let url = `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${event.destination?.lat},${event.destination?.lng}&dirflg=${mode}`;
-                        if (event.waypoints && event.waypoints.length > 0) {
-                          url += `&to=${event.waypoints.map(w => encodeURIComponent(w.name)).join("&to=")}`;
-                        }
-                        return url;
-                      })()}
+                      href={getAppleMapsUrl(event.location)}
                       target="_blank"
                       rel="noreferrer"
                       onClick={(e) => e.stopPropagation()}
                       className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                      title="Apple Maps Directions"
+                      title="Apple Maps"
                     >
                       <Navigation className="w-3 h-3" />
                     </a>
                     <a 
-                      href={(() => {
-                        const mode = event.category === 'walk' ? 'walking' : event.category === 'transit' ? 'transit' : 'driving';
-                        const waypointsStr = event.waypoints?.map(w => encodeURIComponent(w.name)).join('|');
-                        return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(event.origin?.name || '')}&destination=${encodeURIComponent(event.destination?.name || '')}${waypointsStr ? `&waypoints=${waypointsStr}` : ''}&travelmode=${mode}`;
-                      })()}
+                      href={getGoogleMapsUrl(event.location)}
                       target="_blank"
                       rel="noreferrer"
                       onClick={(e) => e.stopPropagation()}
                       className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                      title="Google Maps Directions"
+                      title="Google Maps"
                     >
                       <MapIcon className="w-3 h-3" />
                     </a>
                   </div>
-                )}
-              </div>
-
-              <div className="flex gap-1 bg-slate-100/50 p-1 rounded-xl w-fit">
-                {[
-                  { mode: 'walk', icon: <Footprints className="w-3 h-3" /> },
-                  { mode: 'bike', icon: <Bike className="w-3 h-3" /> },
-                  { mode: 'drive', icon: <Car className="w-3 h-3" /> },
-                  { mode: 'transit', icon: <Bus className="w-3 h-3" /> },
-                  { mode: 'flight', icon: <Plane className="w-3 h-3" /> }
-                ].map(({ mode, icon }) => (
-                  <button
-                    key={mode}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleUpdateTravelMode(dayIdx, event.id, mode as any);
-                    }}
-                    className={cn(
-                      "p-1.5 rounded-lg transition-all",
-                      event.category === mode 
-                        ? "bg-white text-blue-600 shadow-sm ring-1 ring-slate-100" 
-                        : "text-slate-400 hover:text-slate-600"
-                    )}
-                    title={`Switch to ${mode}`}
-                  >
-                    {icon}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            event.location && (
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-600 uppercase tracking-wider min-w-0">
-                  <MapPin className="w-2.5 h-2.5 shrink-0" />
-                  <span className="truncate">{event.location.name}</span>
                 </div>
-                <div className="flex gap-1 shrink-0">
-                  <a 
-                    href={getAppleMapsUrl(event.location)}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                    title="Apple Maps"
-                  >
-                    <Navigation className="w-3 h-3" />
-                  </a>
-                  <a 
-                    href={getGoogleMapsUrl(event.location)}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                    title="Google Maps"
-                  >
-                    <MapIcon className="w-3 h-3" />
-                  </a>
-                </div>
-              </div>
+              )
             )
           )}
         </div>
 
-        {/* Expanded Content */}
-        {(expandedEvents.has(event.id) || (isSuggestion && !isMealSuggestion)) && (
+        {/* Expanded Content - Hide in grid mode (user can interact with suggestions inside details modal) */}
+        {!isGridMode && (expandedEvents.has(event.id) || (isSuggestion && !isMealSuggestion)) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
@@ -3178,285 +3271,8 @@ export default function App() {
 
   return (
     <div className="w-full md:max-w-none max-w-md mx-auto h-[100dvh] bg-slate-50 flex flex-col font-sans md:shadow-none shadow-2xl overflow-hidden relative" id="app-root">
-      {/* AI Assistant Panel */}
-      <AnimatePresence>
-        {showAiAssistant && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-24 left-4 right-4 bg-white rounded-3xl shadow-2xl border border-slate-100 z-50 overflow-hidden flex flex-col max-h-[60vh]"
-          >
-            <div className="p-4 bg-blue-600 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5" />
-                <span className="font-bold">Magic Itinerary Assistant</span>
-              </div>
-              <button 
-                onClick={() => setShowAiAssistant(false)} 
-                className="p-1 hover:bg-blue-500 rounded-lg transition-colors"
-                title="Close AI Assistant"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {aiProposal ? (
-                <div className="space-y-4">
-                  <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100">
-                    <div className="flex justify-between items-start mb-2">
-                       <h3 className="font-bold text-blue-900 flex items-center gap-2">
-                        <Wand2 className="w-4 h-4" />
-                        Proposed Changes
-                      </h3>
-                      {aiProposal.modelInfo && (
-                        <div className="text-right">
-                          <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest">{aiProposal.modelInfo.name.replace('-preview', '')}</p>
-                          {aiProposal.modelInfo.quotaRemaining !== undefined && (
-                            <p className="text-[8px] font-bold text-blue-300">Quota: {aiProposal.modelInfo.quotaRemaining} left today</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-sm text-blue-800 mb-4 italic">"{aiProposal.explanation || "I've updated your itinerary based on your request. Review the changes below."}"</p>
-                    
-                    {aiProposal.assumptions && aiProposal.assumptions.length > 0 && (
-                      <div className="mb-4 text-left">
-                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Assumptions</h4>
-                        <ul className="space-y-1">
-                          {aiProposal.assumptions.map((a, i) => (
-                            <li key={i} className={cn(
-                              "group text-xs flex items-start gap-2 p-1.5 rounded-xl transition-all",
-                              rejectedAssumptionIdxs.includes(i) ? "bg-red-50 text-red-700 opacity-60" : "bg-blue-50/50 text-blue-700"
-                            )}>
-                              <button 
-                                onClick={() => {
-                                  if (rejectedAssumptionIdxs.includes(i)) {
-                                    setRejectedAssumptionIdxs(prev => prev.filter(idx => idx !== i));
-                                  } else {
-                                    setRejectedAssumptionIdxs(prev => [...prev, i]);
-                                  }
-                                }}
-                                className={cn(
-                                  "mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
-                                  rejectedAssumptionIdxs.includes(i) 
-                                    ? "bg-red-500 border-red-500 text-white" 
-                                    : "bg-white border-blue-200 text-blue-500"
-                                )}
-                              >
-                                {rejectedAssumptionIdxs.includes(i) ? <X className="w-2.5 h-2.5" /> : <Check className="w-2.5 h-2.5" />}
-                              </button>
-                              <span className="flex-1 leading-relaxed">{a}</span>
-                              <button 
-                                onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: Assumption "${a}": ` : `Re: Assumption "${a}": `)}
-                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-blue-100 rounded text-blue-400 transition-opacity"
-                                title="Add feedback for this assumption"
-                              >
-                                <MessageSquare className="w-3 h-3" />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                        {/* Consistently handled below */}
-                      </div>
-                    )}
-
-                    {aiProposal.suggestions && aiProposal.suggestions.length > 0 && (
-                      <div className="mb-4">
-                        <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Optional Suggestions</h4>
-                        <div className="space-y-2">
-                          {aiProposal.suggestions.map((s) => (
-                            <div 
-                              key={s.id} 
-                              className={cn(
-                                "p-3 rounded-xl border transition-all flex items-center justify-between gap-3",
-                                rejectedSuggestionIds.includes(s.id) 
-                                  ? "bg-slate-50 border-slate-100 opacity-60" 
-                                  : "bg-white border-blue-100 shadow-sm"
-                              )}
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className={cn(
-                                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                                  s.type === 'activity' ? "bg-green-50 text-green-600" :
-                                  s.type === 'food' ? "bg-orange-50 text-orange-600" :
-                                  "bg-blue-50 text-blue-600"
-                                )}>
-                                  {s.type === 'activity' ? <MapPin className="w-4 h-4" /> :
-                                   s.type === 'food' ? <Utensils className="w-4 h-4" /> :
-                                   <Sparkles className="w-4 h-4" />}
-                                </div>
-                                <p className="text-xs font-medium text-slate-700 leading-tight">{s.text}</p>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <button 
-                                  onClick={() => setAiPrompt(prev => prev ? `${prev}\n\nRe: Suggestion "${s.text}": ` : `Re: Suggestion "${s.text}": `)}
-                                  className="p-1 px-2 hover:bg-blue-50 rounded-lg text-blue-400 transition-colors"
-                                  title="Add feedback for this suggestion"
-                                >
-                                  <MessageSquare className="w-3.5 h-3.5" />
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    if (rejectedSuggestionIds.includes(s.id)) {
-                                      setRejectedSuggestionIds(prev => prev.filter(id => id !== s.id));
-                                    } else {
-                                      setRejectedSuggestionIds(prev => [...prev, s.id]);
-                                    }
-                                  }}
-                                  className={cn(
-                                    "w-6 h-6 rounded-full flex items-center justify-center transition-colors shadow-sm",
-                                    rejectedSuggestionIds.includes(s.id)
-                                      ? "bg-slate-200 text-slate-500"
-                                      : "bg-blue-600 text-white"
-                                  )}
-                                  title={rejectedSuggestionIds.includes(s.id) ? "Approve suggestion" : "Reject suggestion"}
-                                >
-                                  {rejectedSuggestionIds.includes(s.id) ? <Plus className="w-3 h-3" /> : <Check className="w-3 h-3" />}
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {(() => {
-                      const coreEvents = aiProposal.itinerary
-                        .flatMap(d => d.events)
-                        .filter(e => !aiProposal.suggestions?.some(s => s.relatedId === e.id));
-                      
-                      const nonMealCore = coreEvents.filter(e => 
-                        e.category !== 'food' && 
-                        e.category !== 'stay' && 
-                        e.category !== 'travel' && 
-                        e.category !== 'walk' && 
-                        e.category !== 'transit' && 
-                        e.category !== 'drive'
-                      );
-                      
-                      if (nonMealCore.length > 0) {
-                        return (
-                          <div className="mb-4">
-                            <h4 className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">Confirmed Additions</h4>
-                            <div className="flex flex-wrap gap-2">
-                              {nonMealCore.map((e, idx) => (
-                                <div key={idx} className="px-2 py-1 bg-white border border-blue-100 rounded-lg text-[10px] font-bold text-blue-700 flex items-center gap-1 shadow-sm">
-                                  {e.category === 'flight' || e.category === 'logistics' ? <Plane className="w-2.5 h-2.5" /> : 
-                                   e.category === 'work' ? <Briefcase className="w-2.5 h-2.5" /> :
-                                   <MapPin className="w-2.5 h-2.5" />}
-                                  {e.title}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      }
-                      return null;
-                    })()}
-
-                    {/* Consistently handled below */}
-
-                    {(rejectedAssumptionIdxs.length > 0 || rejectedSuggestionIds.length > 0) && (
-                      <div className="mb-4 p-4 bg-red-50 rounded-2xl border border-red-100 shadow-sm text-center">
-                        <button 
-                          onClick={() => {
-                            const assumptionRejections = rejectedAssumptionIdxs.map(idx => aiProposal?.assumptions[idx]).join('; ');
-                            const suggestionRejections = rejectedSuggestionIds.map(id => aiProposal?.suggestions?.find(s => s.id === id)?.text).filter(Boolean).join('; ');
-                            
-                            let feedback = '';
-                            if (assumptionRejections) feedback += `REJECT ASSUMPTIONS: ${assumptionRejections}. `;
-                            if (suggestionRejections) feedback += `REJECT SUGGESTIONS: ${suggestionRejections}. `;
-                            feedback += `Please rethink the itinerary and provide alternatives or adjustments.`;
-                            
-                            setAiPrompt(prev => prev ? `${prev}\n\n${feedback}` : feedback);
-                            handleAiAction('full', (aiPrompt ? aiPrompt + '\n\n' : '') + feedback);
-                          }}
-                          className="w-full py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-700 shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-2 active:scale-95"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" /> Regenerate Proposal with Feedback
-                        </button>
-                      </div>
-                    )}
-
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={applyAiProposal}
-                        className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
-                        title="Apply these changes to your itinerary"
-                      >
-                        <Check className="w-4 h-4" /> Apply Changes
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setAiProposal(null);
-                          setRejectedSuggestionIds([]);
-                        }}
-                        className="flex-1 bg-white text-slate-600 py-2.5 rounded-xl font-bold border border-slate-200 flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors"
-                        title="Discard these changes"
-                      >
-                        <X className="w-4 h-4" /> Discard
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-4">
-                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <MessageSquare className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <p className="text-sm text-slate-500">
-                    Tell me what you want to change. I can add activities, optimize routes, or build a plan from scratch!
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 border-t border-slate-100 bg-slate-50 space-y-3">
-              <div className="relative">
-                <textarea 
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder="e.g., 'Add a nice dinner spot on Day 1' or 'Make Day 2 more relaxing'"
-                  className="w-full bg-white border border-slate-200 rounded-2xl p-3 pr-12 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none h-24"
-                  disabled={isAiLoading}
-                />
-                {isAiLoading && (
-                  <div className="absolute right-3 bottom-3">
-                    <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                )}
-              </div>
-
-              {!isAiLoading && (
-                <div className="space-y-2">
-                  <button 
-                    onClick={() => handleAiAction('full')}
-                    className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95"
-                    title="Generate an itinerary using your prompt"
-                  >
-                    <Wand2 className="w-3.5 h-3.5" /> {view === 'list' ? 'Create Trip' : 'Update Itinerary'}
-                  </button>
-                  
-                  {view === 'itinerary' && !aiPrompt.trim() && (
-                    <button 
-                      onClick={() => handleAiAction('autofill')}
-                      className="w-full py-2.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-blue-100 transition-all active:scale-95"
-                      title="Auto-fill gaps in your itinerary using shortlist and suggestions"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" /> Auto-fill Itinerary
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Header */}
-      <header className="px-6 pt-6 pb-4 bg-white border-b border-slate-100 shrink-0 z-[70]">
+      <header className="px-4 pt-4 pb-2 md:px-6 md:pt-6 md:pb-4 bg-white border-b border-slate-100 shrink-0 z-[70]">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3 min-w-0">
             {view === 'itinerary' && (
@@ -3495,10 +3311,10 @@ export default function App() {
           <div className="flex items-center gap-2">
             {view === 'list' && isAdmin && (
               <button 
-                onClick={() => setShowAiAssistant(!showAiAssistant)}
+                onClick={() => setIsAiAssistantOpen(!isAiAssistantOpen)}
                 className={cn(
                   "p-2 rounded-full transition-all",
-                  showAiAssistant ? "bg-blue-600 text-white shadow-md" : "bg-slate-100 text-slate-600 hover:bg-white hover:shadow-sm"
+                  isAiAssistantOpen ? "bg-blue-600 text-white shadow-md" : "bg-slate-100 text-slate-600 hover:bg-white hover:shadow-sm"
                 )}
                 title="AI Assistant"
               >
@@ -3831,1004 +3647,467 @@ export default function App() {
           )}
         </div>
       ) : (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* DESKTOP SPLIT PANE VIEW (ianyy93/AI-tinerary style) */}
-          <div className="hidden md:grid grid-cols-12 flex-1 overflow-hidden h-full">
-            {/* Left Pane: Timeline and Day selection */}
-            <div className="col-span-4 border-r border-slate-100 flex flex-col bg-white overflow-hidden h-full">
-              {/* Day Tabs */}
-              <div className="p-4 border-b border-slate-100 bg-slate-50/50">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Select Day</p>
-                  <p className="text-[10px] font-mono text-indigo-500 font-bold tracking-wider">
-                    {itinerary.length} DAYS
-                  </p>
-                </div>
-                <div className="flex gap-2 overflow-x-auto scrollbar-hide py-1">
-                  {itinerary.map((day, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setActiveDayIdx(i)}
-                      className={cn(
-                        "flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2",
-                        activeDayIdx === i 
-                          ? "bg-blue-600 text-white shadow-md shadow-blue-200" 
-                          : "bg-white text-slate-500 border border-slate-200 hover:bg-slate-50"
-                      )}
-                      title={`View Day ${i + 1}: ${day.date}`}
-                    >
-                      <span className="text-[10px] font-black tracking-tighter whitespace-nowrap">
-                        {formatDateButton(day.date)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Scrollable Timeline */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h2 className="font-display font-bold text-lg text-slate-900 leading-tight">{activeDay?.title || 'Itinerary'}</h2>
-                    <p className="text-xs text-slate-400 font-medium mt-0.5">Day {activeDayIdx + 1} • {activeDay?.date}</p>
-                  </div>
-                </div>
-
-                {/* Vertical timeline of events on activeDay */}
-                {activeDay?.events && activeDay.events.length === 0 ? (
-                  <div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                    <p className="text-slate-400 text-xs">No events scheduled. Use AI to generate some!</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4 relative pl-4 border-l border-slate-100">
-                    {activeDay?.events.map((event, idx) => (
-                      <div key={event.id || idx} className="relative">
-                        <div className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-blue-600 border-2 border-white shadow-sm" />
-                        <EventTile event={event} dayIdx={activeDayIdx} eventIdx={idx} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                <div className="flex-1 flex overflow-hidden relative">
+          {/* Main Content Area */}
+          <div className={cn(
+            "flex flex-col h-full transition-all duration-300 relative",
+            isAiAssistantOpen ? "w-full md:w-[70%]" : "w-full"
+          )}>
+            {/* Desktop Tabs Header (Mobile uses bottom nav) */}
+            <div className="hidden md:flex p-3 bg-white border-b border-slate-100 items-center justify-between shrink-0">
+               <div className="flex gap-2">
+                 <button onClick={() => setActiveTab('calendar')} className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2", activeTab === 'calendar' ? "bg-indigo-50 text-indigo-600 border border-indigo-100" : "text-slate-500 hover:bg-slate-50")}>
+                   <Calendar className="w-4 h-4" /> Calendar
+                 </button>
+                 <button onClick={() => setActiveTab('places')} className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2", activeTab === 'places' ? "bg-indigo-50 text-indigo-600 border border-indigo-100" : "text-slate-500 hover:bg-slate-50")}>
+                   <MapPin className="w-4 h-4" /> Shortlist
+                 </button>
+                 <button onClick={() => setActiveTab('info')} className={cn("px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2", activeTab === 'info' ? "bg-indigo-50 text-indigo-600 border border-indigo-100" : "text-slate-500 hover:bg-slate-50")}>
+                   <Info className="w-4 h-4" /> Reservations
+                 </button>
+               </div>
+               
+               <button 
+                 onClick={() => setIsAiAssistantOpen(!isAiAssistantOpen)} 
+                 className={cn("px-4 py-2 rounded-lg font-bold text-sm transition-all flex items-center gap-2", isAiAssistantOpen ? "bg-slate-100 text-slate-600" : "bg-blue-600 text-white hover:bg-blue-700 shadow-md")}
+                 title="Toggle Magic AI"
+               >
+                 <Sparkles className="w-4 h-4" /> AI Assistant
+               </button>
             </div>
 
-            {/* Middle Pane: Tab detail contents (Map, shortlist, stays, gas, etc.) */}
-            <div className="col-span-5 bg-slate-50/30 flex flex-col overflow-hidden h-full border-r border-slate-100">
-              {/* Tabs list at top */}
-              <div className="p-4 border-b border-slate-100 bg-white flex items-center justify-around">
-                {[
-                  { id: 'itinerary', label: 'Trip Overview', icon: <Compass className="w-4 h-4" /> },
-                  { id: 'places', label: 'Shortlist', icon: <MapPin className="w-4 h-4" /> },
-                  { id: 'gas', label: 'Gas Stations', icon: <Fuel className="w-4 h-4" /> },
-                  { id: 'info', label: 'Reservations', icon: <Info className="w-4 h-4" /> },
-                ].map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => setActiveTab(t.id as any)}
-                    className={cn(
-                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                      activeTab === t.id 
-                        ? "bg-indigo-50 text-indigo-600 font-bold border border-indigo-100" 
-                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                    )}
-                  >
-                    {t.icon}
-                    <span>{t.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Scrollable Detail Body */}
-              <div className="flex-1 overflow-y-auto p-4 scrollbar-hide">
-                {activeTab === 'itinerary' && (
-                  <div className="space-y-6">
-                    {/* General Trip Info Card */}
-                    <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
-                      <div>
-                        <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-600 font-bold text-[10px] uppercase tracking-wider">Active Trip</span>
-                        <h3 className="font-display font-bold text-lg text-slate-900 mt-1">{tripTitle}</h3>
-                        <p className="text-xs text-slate-500 mt-0.5">📅 {tripDates}</p>
+            {/* Tab Content */}
+            <div className="flex-1 overflow-y-auto scrollbar-hide bg-slate-50">
+              <AnimatePresence mode="wait">
+                {activeTab === 'calendar' && (
+                  <motion.div key="calendar" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="flex flex-col h-full min-h-0">
+                    {/* Toggle Schedule/Grid & Zoom */}
+                    <div className="flex flex-wrap items-center justify-center gap-3 mt-2 mb-2 px-4 shrink-0">
+                      <div className="flex bg-slate-200/60 p-1 rounded-xl w-fit">
+                        <button 
+                          onClick={() => setCalendarViewMode('schedule')}
+                          className={cn("px-4 py-1.5 rounded-lg text-xs font-bold transition-all", calendarViewMode === 'schedule' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}
+                        >
+                          Schedule
+                        </button>
+                        <button 
+                          onClick={() => setCalendarViewMode('grid')}
+                          className={cn("px-4 py-1.5 rounded-lg text-xs font-bold transition-all", calendarViewMode === 'grid' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}
+                        >
+                          All Days
+                        </button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                          <p className="text-slate-400 font-bold uppercase text-[9px]">Total Days</p>
-                          <p className="text-base font-black text-slate-800 mt-1">{itinerary.length} Days</p>
+                      {calendarViewMode === 'grid' && (
+                        <div className="flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl">
+                          <button 
+                            onClick={() => setHourHeight(prev => Math.max(40, prev - 20))}
+                            disabled={hourHeight <= 40}
+                            className="p-1.5 rounded-lg hover:bg-white text-slate-600 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                            title="Zoom Out"
+                          >
+                            <ZoomOut className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1.5 select-none">
+                            Zoom
+                          </span>
+                          <button 
+                            onClick={() => setHourHeight(prev => Math.min(200, prev + 20))}
+                            disabled={hourHeight >= 200}
+                            className="p-1.5 rounded-lg hover:bg-white text-slate-600 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                            title="Zoom In"
+                          >
+                            <ZoomIn className="w-3.5 h-3.5" />
+                          </button>
                         </div>
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                          <p className="text-slate-400 font-bold uppercase text-[9px]">Total Events</p>
-                          <p className="text-base font-black text-slate-800 mt-1">
-                            {itinerary.reduce((acc, d) => acc + (d.events?.length || 0), 0)} Items
-                          </p>
-                        </div>
-                      </div>
+                      )}
                     </div>
-
-                    {/* Weather forecast */}
-                    <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
-                      <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-2">☀️ 10-Day Weather Outlook</h4>
-                      <div className="grid grid-cols-5 gap-2">
-                        {itinerary.map((day, i) => (
-                          <div key={i} className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-center flex flex-col items-center">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter truncate w-full">D{i + 1}</p>
-                            {weatherData[i] ? (
-                              <>
-                                <WeatherIcon icon={weatherData[i].icon} className="w-5 h-5 my-1.5 text-blue-500" />
-                                <p className="text-[10px] font-bold text-slate-700 leading-none">{weatherData[i].maxTemp}°</p>
-                                <p className="text-[8px] font-bold text-slate-400 mt-0.5 leading-none">{weatherData[i].minTemp}°</p>
-                              </>
-                            ) : (
-                              <p className="text-[10px] text-slate-300 my-2">-</p>
-                            )}
+                    
+                    {calendarViewMode === 'schedule' ? (
+                      <div className="p-4 md:p-6 space-y-8 pb-32">
+                         {itinerary.map((day, dIdx) => (
+                           <div key={dIdx} className="space-y-4 relative">
+                             <div className="sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md py-2 md:py-3 border-b border-slate-200/60 flex items-baseline justify-between px-1">
+                               <div>
+                                 <h3 className="font-display font-bold text-slate-900 text-base md:text-lg">Day {dIdx + 1} <span className="text-slate-400 font-normal">| {day.date}</span></h3>
+                                 {day.title && <p className="text-xs md:text-sm text-slate-500 font-medium">{day.title}</p>}
+                               </div>
+                             </div>
+                             {day.events?.length === 0 ? (
+                               <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200 shadow-sm">
+                                 <p className="text-slate-400 text-sm">No events</p>
+                               </div>
+                             ) : (
+                               <div className="space-y-3 relative pl-4 border-l-2 border-slate-100">
+                                 {day.events?.map((event, idx) => (
+                                   <div key={event.id || idx} className="relative mt-3">
+                                     <div className="absolute -left-[23px] top-1.5 w-3 h-3 rounded-full bg-blue-600 border-2 border-white shadow-sm" />
+                                     <EventTile event={event} dayIdx={dIdx} eventIdx={idx} />
+                                   </div>
+                                 ))}
+                               </div>
+                             )}
+                           </div>
+                         ))}
+                      </div>
+                    ) : (
+                      <div ref={gridScrollContainerRef} className="flex-1 overflow-auto bg-slate-50 relative pb-20 scrollbar-hide">
+                        <div className="flex min-w-max min-h-max relative">
+                          {/* Time Axis */}
+                          <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-30">
+                            <div className="h-[88px] border-b border-slate-200 bg-white sticky top-0 z-40" />
+                            <div className="relative" style={{ height: 24 * hourHeight }}>
+                              {Array.from({ length: 24 }).map((_, h) => (
+                                <div key={h} className="absolute w-full text-right pr-2 text-[10px] font-bold text-slate-400" style={{ top: h * hourHeight - 8 }}>
+                                  {h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`}
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        ))}
+                          
+                          {/* Background Grid Lines */}
+                          <div className="absolute inset-0 pointer-events-none z-0 ml-16" style={{ height: 24 * hourHeight + 88 }}>
+                            <div className="h-[88px]" />
+                            {Array.from({ length: 24 }).map((_, h) => (
+                              <div key={h} className="border-b border-slate-200 w-full" style={{ height: hourHeight }} />
+                            ))}
+                          </div>
+
+                          {/* Day Columns */}
+                          <div className="flex">
+                            {itinerary.map((day, i) => {
+                              // Compute layout for overlapping events
+                              const computeOverlappingLayout = (events = []) => {
+                                const prepared = events.map((event, idx) => {
+                                  const startMins = toMinutes(event.startTime || "00:00");
+                                  let endMins = toMinutes(event.endTime || event.startTime || "01:00");
+                                  if (endMins < startMins && event.endTime) {
+                                    endMins += 24 * 60;
+                                  } else if (endMins === startMins) {
+                                    endMins += 60;
+                                  }
+                                  return {
+                                    event,
+                                    idx,
+                                    startMins,
+                                    endMins,
+                                    colIdx: -1
+                                  };
+                                });
+
+                                prepared.sort((a, b) => {
+                                  if (a.startMins !== b.startMins) {
+                                    return a.startMins - b.startMins;
+                                  }
+                                  return b.endMins - a.endMins;
+                                });
+
+                                const clusters = [];
+                                let currentCluster = [];
+                                let clusterMaxEnd = 0;
+
+                                prepared.forEach(item => {
+                                  if (currentCluster.length === 0) {
+                                    currentCluster.push(item);
+                                    clusterMaxEnd = item.endMins;
+                                  } else if (item.startMins < clusterMaxEnd) {
+                                    currentCluster.push(item);
+                                    clusterMaxEnd = Math.max(clusterMaxEnd, item.endMins);
+                                  } else {
+                                    clusters.push(currentCluster);
+                                    currentCluster = [item];
+                                    clusterMaxEnd = item.endMins;
+                                  }
+                                });
+                                if (currentCluster.length > 0) {
+                                  clusters.push(currentCluster);
+                                }
+
+                                const results = [];
+
+                                clusters.forEach(cluster => {
+                                  const columns = [];
+
+                                  cluster.forEach(item => {
+                                    let placedIdx = -1;
+                                    for (let c = 0; c < columns.length; c++) {
+                                      const lastInCol = columns[c][columns[c].length - 1];
+                                      if (item.startMins >= lastInCol.endMins) {
+                                        placedIdx = c;
+                                        break;
+                                      }
+                                    }
+
+                                    if (placedIdx !== -1) {
+                                      columns[placedIdx].push(item);
+                                      item.colIdx = placedIdx;
+                                    } else {
+                                      columns.push([item]);
+                                      item.colIdx = columns.length - 1;
+                                    }
+                                  });
+
+                                  const colsCount = columns.length;
+                                  cluster.forEach(item => {
+                                    const colIdx = item.colIdx;
+                                    const top = (item.startMins / 60) * hourHeight;
+                                    const height = ((item.endMins - item.startMins) / 60) * hourHeight;
+                                    const width = 100 / colsCount;
+                                    const left = colIdx * width;
+
+                                    results.push({
+                                      event: item.event,
+                                      idx: item.idx,
+                                      top,
+                                      height,
+                                      left,
+                                      width
+                                    });
+                                  });
+                                });
+
+                                return results;
+                              };
+
+                              return (
+                                <div key={i} className="w-72 shrink-0 border-r border-slate-200 relative flex flex-col z-10">
+                                  {/* Header */}
+                                  <div className="h-[88px] p-4 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-20 overflow-hidden shrink-0">
+                                    <div className="flex justify-between items-center mb-1">
+                                      <h3 className="font-display font-bold text-slate-800 text-lg">Day {i + 1}</h3>
+                                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider bg-white px-2 py-1 rounded-md border border-slate-200">
+                                        {day.date}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-slate-500 truncate font-medium">{day.title}</p>
+                                  </div>
+                                  
+                                  {/* Events Area */}
+                                  <div className="relative w-full overflow-hidden" style={{ height: 24 * hourHeight }}>
+                                    {computeOverlappingLayout(day.events).map(({ event, idx, top, height, left, width }) => {
+                                      return (
+                                        <div 
+                                          key={event.id || idx} 
+                                          className="absolute px-1 py-0.5 transition-all"
+                                          style={{ 
+                                            top: `${top}px`, 
+                                            height: `${height}px`,
+                                            left: `${left}%`,
+                                            width: `${width}%`
+                                          }}
+                                        >
+                                          <EventTile event={event} dayIdx={i} eventIdx={idx} isGridMode={true} />
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
+                    )}
+                  </motion.div>
                 )}
 
                 {activeTab === 'places' && (
-                  <div className="space-y-4">
-                    {shortlist.length === 0 ? (
-                      <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
-                        <p className="text-slate-400 text-xs">No shortlisted places. Chat with assistant to find some!</p>
-                      </div>
-                    ) : (
-                      <div className="grid gap-3">
-                        {shortlist.map((item, idx) => (
-                          <div key={idx} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3">
-                            <div className="h-8 w-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                              <MapPin className="h-4 w-4" />
-                            </div>
-                            <div>
-                              <h4 className="font-display font-bold text-sm text-slate-800 leading-tight">{item.name || item.title}</h4>
-                              {item.notes && <p className="text-xs text-slate-500 mt-1 leading-snug">{item.notes}</p>}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {activeTab === 'gas' && (
-                  <div className="h-[65vh] rounded-2xl overflow-hidden border border-slate-100 bg-white shadow-sm flex flex-col">
-                    <GasPricesView userLoc={userLoc} />
-                  </div>
+                  <motion.div key="places" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="p-3 md:p-6 space-y-4 pb-20">
+                    <PlacesView 
+                      itinerary={itinerary}
+                      shortlist={shortlist}
+                      onAddShortlist={(p) => setShortlist(s => [...s, p])}
+                      onRemoveShortlist={(id) => setShortlist(s => s.filter(x => x.id !== id))}
+                      isAdmin={isAdmin}
+                      onUpdateItinerary={setItinerary}
+                      onSaveToFirestore={(newItinerary) => saveToFirestore(newItinerary, tripTitle, tripDates)}
+                      onNavigateToEvent={(d, e) => {}}
+                    />
+                  </motion.div>
                 )}
 
                 {activeTab === 'info' && (
-                  <div className="space-y-6">
-                    {/* Flights */}
-                    {flightInfo && (
-                      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
-                        <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-1.5">✈️ Flight Information</h4>
-                        <div className="space-y-3 text-xs text-slate-600">
-                          {flightInfo.outbound && (
-                            <div className="flex justify-between border-b pb-1">
-                              <span className="font-semibold text-slate-400 uppercase text-[9px]">Outbound Flight</span>
-                              <span className="font-bold text-slate-800">{flightInfo.outbound.number || 'N/A'}</span>
-                            </div>
-                          )}
-                          {flightInfo.return && (
-                            <div className="flex justify-between border-b pb-1">
-                              <span className="font-semibold text-slate-400 uppercase text-[9px]">Return Flight</span>
-                              <span className="font-bold text-slate-800">{flightInfo.return.number || 'N/A'}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Stays */}
-                    {stays && stays.length > 0 && (
-                      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
-                        <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-1.5">🏨 Stays & Lodging</h4>
-                        <div className="space-y-3">
-                          {stays.map((stay, idx) => (
-                            <div key={idx} className="border-b last:border-0 pb-2 last:pb-0 text-xs">
-                              <p className="font-bold text-slate-800">{stay.name}</p>
-                              <p className="text-slate-400 text-[10px] uppercase font-bold tracking-wider mt-0.5">Confirmation: {stay.confirmationNumber || 'N/A'}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Members */}
-                    {members && members.length > 0 && (
-                      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
-                        <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-1.5">👥 Trip Members</h4>
-                        <div className="grid grid-cols-2 gap-2">
-                          {members.map((member) => (
-                            <div key={member.id} className="bg-slate-50 p-2 rounded-xl flex items-center gap-2">
-                              <div 
-                                className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black text-white"
-                                style={{ backgroundColor: member.color }}
-                              >
-                                {member.initials}
+                  <motion.div key="info" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="p-4 md:p-6 space-y-6 pb-32">
+                      {/* Flights */}
+                      {flightInfo && (
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                          <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-1.5">✈️ Flight Information</h4>
+                          <div className="space-y-3 text-sm text-slate-600">
+                            {flightInfo.outbound && (
+                              <div className="flex justify-between border-b pb-2">
+                                <span className="font-semibold text-slate-400 uppercase text-[10px]">Outbound Flight</span>
+                                <span className="font-bold text-slate-800">{flightInfo.outbound.number || 'N/A'}</span>
                               </div>
-                              <span className="text-xs font-bold text-slate-700 truncate">{member.name}</span>
-                            </div>
-                          ))}
+                            )}
+                            {flightInfo.return && (
+                              <div className="flex justify-between border-b pb-2 border-transparent">
+                                <span className="font-semibold text-slate-400 uppercase text-[10px]">Return Flight</span>
+                                <span className="font-bold text-slate-800">{flightInfo.return.number || 'N/A'}</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
 
-                    {/* If nothing is available */}
-                    {!flightInfo && !rentalInfo && (!stays || stays.length === 0) && (
-                      <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
-                        <p className="text-slate-400 text-xs">No reservation details available for this trip.</p>
-                      </div>
-                    )}
-                  </div>
+                      {/* Stays */}
+                      {stays && stays.length > 0 && (
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                          <h4 className="font-display font-bold text-sm text-slate-800 mb-3 flex items-center gap-1.5">🏨 Stays & Lodging</h4>
+                          <div className="space-y-3">
+                            {stays.map((stay, idx) => (
+                              <div key={idx} className="border-b border-slate-100 last:border-0 pb-3 last:pb-0 text-sm">
+                                <p className="font-bold text-slate-800">{stay.name}</p>
+                                <p className="text-slate-400 text-[10px] uppercase font-bold tracking-wider mt-1">Confirmation: {stay.confirmationNumber || 'N/A'}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Members */}
+                      {members && members.length > 0 && (
+                        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                          <h4 className="font-display font-bold text-sm text-slate-800 mb-4 flex items-center gap-1.5">👥 Trip Members</h4>
+                          <div className="grid grid-cols-2 gap-3">
+                            {members.map((member) => (
+                              <div key={member.id} className="bg-slate-50 p-2.5 rounded-xl flex items-center gap-3 border border-slate-100">
+                                <div 
+                                  className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black text-white shadow-sm"
+                                  style={{ backgroundColor: member.color }}
+                                >
+                                  {member.initials}
+                                </div>
+                                <span className="text-sm font-bold text-slate-700 truncate">{member.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* If nothing is available */}
+                      {!flightInfo && !rentalInfo && (!stays || stays.length === 0) && (
+                        <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-200 shadow-sm">
+                          <Info className="w-10 h-10 mx-auto text-slate-300 mb-3" />
+                          <p className="text-slate-400 text-sm">No reservation details available for this trip.</p>
+                        </div>
+                      )}
+                  </motion.div>
                 )}
-              </div>
-            </div>
-
-            {/* Right Pane: Persistent AI Assistant Chat */}
-            <div className="col-span-3 bg-white flex flex-col overflow-hidden h-full">
-              <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
-                  <span className="font-display font-bold text-sm">Magic AI Assistant</span>
-                </div>
-              </div>
-
-              {/* Chat Output Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide bg-slate-50/50">
-                {aiProposal ? (
-                  <div className="space-y-3">
-                    <div className="bg-blue-50 rounded-xl p-3 border border-blue-100 text-xs">
-                      <div className="flex justify-between items-start mb-1.5">
-                        <h3 className="font-bold text-blue-900 flex items-center gap-1">
-                          <Wand2 className="w-3.5 h-3.5" /> Proposed Changes
-                        </h3>
-                      </div>
-                      <p className="text-blue-800 italic">"{aiProposal.explanation}"</p>
-                      <div className="flex gap-2 mt-3">
-                        <button 
-                          onClick={applyAiProposal}
-                          className="flex-1 bg-blue-600 text-white py-1.5 rounded-lg text-[10px] font-bold"
-                        >
-                          Apply Changes
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setAiProposal(null);
-                            setRejectedSuggestionIds([]);
-                          }}
-                          className="flex-1 bg-white text-slate-600 py-1.5 rounded-lg text-[10px] font-bold border"
-                        >
-                          Discard
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-slate-400">
-                    <MessageSquare className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-                    <p className="text-xs font-semibold leading-relaxed">Tell me what to build or change. I can add activities, suggest items, or auto-fill your plans!</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Prompt Input Box */}
-              <div className="p-3 border-t border-slate-100 bg-white">
-                <div className="relative">
-                  <textarea 
-                    value={aiPrompt}
-                    onChange={(e) => setAiPrompt(e.target.value)}
-                    placeholder="e.g., 'Add a dinner spot on Day 1'"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 pr-10 text-xs focus:ring-2 focus:ring-blue-500 outline-none resize-none h-16"
-                    disabled={isAiLoading}
-                  />
-                  {isAiLoading ? (
-                    <div className="absolute right-2.5 bottom-2.5">
-                      <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => handleAiAction('full')}
-                      disabled={!aiPrompt.trim()}
-                      className="absolute right-2 bottom-2 p-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg transition"
-                    >
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              </div>
+              </AnimatePresence>
             </div>
           </div>
 
-          {/* MOBILE VIEW FALLBACK */}
-          <div className="md:hidden flex-1 flex flex-col overflow-hidden h-full">
-            <>
-          {/* Day Tabs */}
-          {activeTab === 'itinerary' && (
-            <div className="space-y-2">
-              <div className="flex gap-2 overflow-x-auto scrollbar-hide py-2 px-6">
-                {itinerary.map((day, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setActiveDayIdx(i)}
-                    className={cn(
-                      "flex-shrink-0 px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2",
-                      activeDayIdx === i 
-                        ? "bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105" 
-                        : "bg-slate-100 text-slate-500"
-                    )}
-                    title={`View Day ${i + 1}: ${day.date}`}
-                  >
-                    <span className="text-[10px] sm:text-xs font-black tracking-tighter whitespace-nowrap">
-                      {formatDateButton(day.date)}
-                    </span>
-                    {weatherData[i] ? (
-                      <WeatherIcon icon={weatherData[i].icon} className="w-3 h-3 opacity-80" />
-                    ) : (
-                      <span className="text-[10px] opacity-40">-</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-              
-              {/* Filter Pills */}
-              <div className="flex gap-2 overflow-x-auto scrollbar-hide px-6 pb-2">
-                {[
-                  { id: 'all', label: 'All', icon: <Check className="w-3 h-3" /> },
-                  { id: 'activity', label: 'Activities', icon: <Sun className="w-3 h-3" /> },
-                  { id: 'food', label: 'Meals', icon: <Utensils className="w-3 h-3" /> },
-                  { id: 'travel', label: 'Travel', icon: <Car className="w-3 h-3" /> },
-                  { id: 'flight', label: 'Flights', icon: <Plane className="w-3 h-3" /> },
-                  { id: 'stay', label: 'Stay', icon: <Moon className="w-3 h-3" /> },
-                  { id: 'work', label: 'Work', icon: <Briefcase className="w-3 h-3" /> },
-                ].map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => setActiveFilter(f.id)}
-                    className={cn(
-                      "flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider transition-all border",
-                      activeFilter === f.id 
-                        ? "bg-slate-900 text-white border-slate-900 shadow-sm" 
-                        : "bg-white text-slate-400 border-slate-100 hover:border-slate-200"
-                    )}
-                    title={`Filter by ${f.label}`}
-                  >
-                    {f.icon}
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-        {/* Content */}
-        <main className="flex-1 overflow-y-auto scrollbar-hide">
-        <AnimatePresence mode="wait">
-          {activeTab === 'itinerary' && (
-            activeDay ? (
+          {/* Mobile Backdrop */}
+          <AnimatePresence>
+            {isAiAssistantOpen && (
               <motion.div 
-                key={`day-${activeDayIdx}`}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="pb-32"
-              >
-              <div className="sticky top-0 z-[60] bg-white/80 backdrop-blur-md px-6 py-4 border-b border-slate-50 mb-6">
-                <div className="flex justify-between items-start">
-                  <div>
-                    {isEditing ? (
-                      <input 
-                        type="text"
-                        value={activeDay.title}
-                        onChange={(e) => {
-                          const newItinerary = [...itinerary];
-                          newItinerary[activeDayIdx].title = e.target.value;
-                          setItinerary(newItinerary);
-                          saveToFirestore(newItinerary);
-                        }}
-                        className="text-xl font-bold text-slate-900 bg-transparent border-none p-0 focus:ring-0 w-full"
-                      />
-                    ) : (
-                      <h2 className="text-xl font-bold text-slate-900">{activeDay.title}</h2>
-                    )}
-                    {isEditing ? (
-                      <input 
-                        type="text"
-                        value={activeDay.date}
-                        onChange={(e) => {
-                          const newItinerary = [...itinerary];
-                          newItinerary[activeDayIdx].date = e.target.value;
-                          setItinerary(newItinerary);
-                          saveToFirestore(newItinerary);
-                        }}
-                        className="text-sm text-slate-500 bg-transparent border-none p-0 focus:ring-0 w-full"
-                      />
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm text-slate-500 font-medium">Day {activeDayIdx + 1} • {activeDay.date}</p>
-                        {weatherData[activeDayIdx] ? (
-                          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 rounded-full text-blue-600" title={weatherData[activeDayIdx].condition}>
-                            <WeatherIcon icon={weatherData[activeDayIdx].icon} className="w-3 h-3" />
-                            <span className="text-[10px] font-bold">{weatherData[activeDayIdx].minTemp}-{weatherData[activeDayIdx].maxTemp}°C</span>
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-slate-300">-</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <a 
-                      href={getDayRouteUrl(activeDay.events, 'apple') || '#'} 
-                      target="_blank" 
-                      rel="noreferrer"
-                      className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                      title="Apple Maps Route"
-                    >
-                      <Navigation className="w-4 h-4" />
-                    </a>
-                    <a 
-                      href={getDayRouteUrl(activeDay.events, 'google') || '#'} 
-                      target="_blank" 
-                      rel="noreferrer"
-                      className="p-2 bg-slate-100 rounded-xl text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                      title="Google Maps Route"
-                    >
-                      <MapIcon className="w-4 h-4" />
-                    </a>
-                  </div>
-                </div>
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsAiAssistantOpen(false)}
+                className="absolute inset-0 bg-slate-900/20 backdrop-blur-sm z-40 md:hidden"
+              />
+            )}
+          </AnimatePresence>
+
+          {/* Collapsible AI Assistant Pane */}
+          {/* Note: using position absolute on mobile to overlay, and relative/flex-basis on desktop to push content */}
+          <div className={cn(
+            "absolute inset-y-0 right-0 md:static z-50 bg-white border-l border-slate-200 flex flex-col transition-all duration-300 shadow-2xl md:shadow-none overflow-hidden",
+            isAiAssistantOpen ? "translate-x-0 w-[85%] sm:w-[350px] md:w-[30%]" : "translate-x-full w-[85%] sm:w-[350px] md:w-0 md:translate-x-0 md:border-none"
+          )}>
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                <span className="font-display font-bold text-sm truncate whitespace-nowrap">Magic AI Assistant</span>
               </div>
-              <div className="px-6">
-                <div className="space-y-4">
-                  {(() => {
-                    const eventsWithIdx = (activeDay.events || []).map((e, idx) => ({ ...e, originalIdx: idx }));
-                                      // Group events by startTime for overlapping tiles
-                    const rawGroups: (TripEvent & { originalIdx: number })[][] = [];
-                    let i = 0;
-                    while (i < eventsWithIdx.length) {
-                      const current = eventsWithIdx[i];
-                      const group = [current];
-                      let j = i + 1;
-                      
-                      const toMinutes = (timeStr: string) => {
-                        if (!timeStr) return 0;
-                        const parts = timeStr.split(' ');
-                        const time = parts[0];
-                        const modifier = parts[1];
-                        let [hours, minutes] = time.split(':').map(Number);
-                        if (modifier === 'PM' && hours < 12) hours += 12;
-                        if (modifier === 'AM' && hours === 12) hours = 0;
-                        return hours * 60 + minutes;
-                      };
-
-                      const overlaps = (e1: TripEvent, e2: TripEvent) => {
-                        if (!e1.startTime || !e2.startTime) return false;
-                        
-                        try {
-                          const s1 = toMinutes(e1.startTime);
-                          const e1_end = toMinutes(e1.endTime || e1.startTime);
-                          const s2 = toMinutes(e2.startTime);
-                          const e2_end = toMinutes(e2.endTime || e2.startTime);
-
-                          if (s1 === s2) return true;
-
-                          const m1 = e1.memberIds || [];
-                          const m2 = e2.memberIds || [];
-                          const differentMembers = m1.length > 0 && m2.length > 0 && 
-                            (m1.some(id => !m2.includes(id)) || m2.some(id => !m1.includes(id)));
-
-                          if (differentMembers) {
-                            return (s1 < e2_end && s2 < e1_end) || Math.abs(s1 - s2) <= 30;
-                          }
-
-                          return s1 < e2_end && s2 < e1_end && Math.abs(s1 - s2) < 5;
-                        } catch (e) {
-                          return false;
-                        }
-                      };
-
-                      while (j < eventsWithIdx.length && 
-                             group.some(e => overlaps(e, eventsWithIdx[j]))) {
-                        group.push(eventsWithIdx[j]);
-                        j++;
-                      }
-                      rawGroups.push(group);
-                      i = j;
-                    }
-
-                    // Deduplicate identical events across members within each group
-                    const groupedEvents = rawGroups.map(group => {
-                      const deduped: (TripEvent & { originalIdx: number })[] = [];
-                      group.forEach(event => {
-                        const existing = deduped.find(d => 
-                          d.title === event.title && 
-                          d.startTime === event.startTime && 
-                          d.endTime === event.endTime &&
-                          d.location?.name === event.location?.name &&
-                          d.type === event.type
-                        );
-                        if (existing) {
-                          // Merge members
-                          const allMembers = Array.from(new Set([...(existing.memberIds || []), ...(event.memberIds || [])]));
-                          existing.memberIds = allMembers;
-                        } else {
-                          deduped.push({ ...event });
-                        }
-                      });
-                      return deduped;
-                    });
-
-                    return (
-                      <div className="space-y-3">
-                        {groupedEvents
-                          .map((group) => group.filter(event => {
-                            if (activeFilter === 'all') return true;
-                            if (activeFilter === 'activity') return event.category === 'activity' || event.category === 'walk';
-                            if (activeFilter === 'food') return event.category === 'food';
-                            if (activeFilter === 'travel') return event.type === 'travel' || event.category === 'drive' || event.category === 'transit';
-                            if (activeFilter === 'flight') return event.category === 'flight';
-                            if (activeFilter === 'stay') return event.category === 'stay';
-                            return true;
-                          }))
-                          .filter(group => group.length > 0)
-                          .map((group, groupIdx) => {
-                            const mainEvent = group[0];
-                            const isMainCurrent = isCurrentEvent(mainEvent);
-                            
-                            const groupId = `${activeDayIdx}-${groupIdx}`;
-
-                             return (
-                              <div key={groupIdx} className="relative">
-                                {group.length > 1 ? (
-                                          <div className="relative p-4 rounded-[2rem] bg-slate-100 border border-slate-200 flex flex-col gap-4">
-                                            {(() => {
-                                              // Get all unique members involved in this group
-                                              const involvedMemberIds = new Set<string>();
-                                              group.forEach(event => {
-                                                const eventMembers = expandMembers(event.memberIds, masterTravellers);
-                                                eventMembers.forEach(id => {
-                                                  involvedMemberIds.add(id);
-                                                });
-                                              });
-
-                                              // Check if all events in the group are shared by all involved members
-                                              const allEventsShared = group.every(event => {
-                                                const eventMembers = expandMembers(event.memberIds, masterTravellers);
-                                                return Array.from(involvedMemberIds).every(id => eventMembers.includes(id));
-                                              });
-
-                                              // If no specific members, or only 'everyone', or all events are shared, just show one column
-                                              if (involvedMemberIds.size <= 1 || allEventsShared) {
-                                                return (
-                                                  <div className="flex-1 flex flex-col gap-2">
-                                                    {group.map((event) => (
-                                                      <div key={`${event.id}-shared`} className="flex-1 flex flex-col">
-                                                        <EventTile 
-                                                          event={event} 
-                                                          dayIdx={activeDayIdx}
-                                                          eventIdx={event.originalIdx!}
-                                                          isGrouped={true}
-                                                        />
-                                                      </div>
-                                                    ))}
-                                                  </div>
-                                                );
-                                              }
-
-                                              const sortedMemberIds = Array.from(involvedMemberIds).sort((a, b) => {
-                                                const aIdx = masterTravellers.findIndex(m => m.id === a);
-                                                const bIdx = masterTravellers.findIndex(m => m.id === b);
-                                                return aIdx - bIdx;
-                                              });
-
-                                              // Group members by their event lists
-                                              const memberGroups: { tabId: string, memberIds: string[], events: TripEvent[] }[] = [];
-                                              
-                                              sortedMemberIds.forEach(mid => {
-                                                const memberEvents = group.filter(e => {
-                                                  const eventMembers = expandMembers(e.memberIds, masterTravellers);
-                                                  return eventMembers.includes(mid);
-                                                });
-                                                if (memberEvents.length === 0) return;
-
-                                                const existingGroup = memberGroups.find(mg => {
-                                                  if (mg.events.length !== memberEvents.length) return false;
-                                                  return mg.events.every((e, i) => e.id === memberEvents[i].id);
-                                                });
-
-                                                if (existingGroup) {
-                                                  existingGroup.memberIds.push(mid);
-                                                  existingGroup.tabId = existingGroup.memberIds.join('-');
-                                                } else {
-                                                  memberGroups.push({ tabId: mid, memberIds: [mid], events: memberEvents });
-                                                }
-                                              });
-
-                                              // 'Everyone' events (events shared by all involved members)
-                                              const sharedEvents = group.filter(e => {
-                                                const eventMembers = expandMembers(e.memberIds, masterTravellers);
-                                                return Array.from(involvedMemberIds).every(id => eventMembers.includes(id));
-                                              });
-
-                                              // Add 'everyone' tab only if there are shared events
-                                              if (sharedEvents.length > 0) {
-                                                memberGroups.push({ tabId: 'everyone', memberIds: [], events: sharedEvents });
-                                              }
-
-                                              const activeTabId = activeGroupTabs[groupId] || memberGroups[0]?.tabId;
-                                              const activeGroup = memberGroups.find(mg => mg.tabId === activeTabId) || memberGroups[0];
-
-                                              return (
-                                                <>
-                                                  <div className="flex gap-2 p-1.5 bg-slate-200/50 rounded-full w-max mx-auto shadow-inner shadow-slate-200/50">
-                                                    {memberGroups.map(mg => {
-                                                      const isActive = activeTabId === mg.tabId;
-                                                      return (
-                                                        <button
-                                                          key={mg.tabId}
-                                                          onClick={() => setActiveGroupTabs(prev => ({ ...prev, [groupId]: mg.tabId }))}
-                                                          className={cn(
-                                                            "flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-300",
-                                                            isActive ? "bg-white shadow-sm scale-105" : "hover:bg-slate-200/50 grayscale hover:grayscale-0 opacity-50 hover:opacity-100"
-                                                          )}
-                                                        >
-                                                          {mg.tabId === 'everyone' ? (
-                                                            <div className="flex items-center gap-1.5">
-                                                              <Users className="w-3.5 h-3.5 text-slate-500" />
-                                                              <span className="text-[10px] font-bold text-slate-700 uppercase tracking-widest">Everyone</span>
-                                                            </div>
-                                                          ) : (
-                                                            <div className="flex items-center gap-2">
-                                                              <div className="flex -space-x-1.5">
-                                                                {mg.memberIds.map(mid => {
-                                                                  const member = masterTravellers.find(m => m.id === mid);
-                                                                  return (
-                                                                    <div 
-                                                                      key={mid} 
-                                                                      className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-black text-white border-2 border-white/50 shadow-sm" 
-                                                                      style={{ backgroundColor: member?.color || '#cbd5e1' }}
-                                                                    >
-                                                                      {member?.initials}
-                                                                    </div>
-                                                                  );
-                                                                })}
-                                                              </div>
-                                                            </div>
-                                                          )}
-                                                        </button>
-                                                      )
-                                                    })}
-                                                  </div>
-
-                                                  <div className="flex flex-col gap-2 relative">
-                                                    <AnimatePresence mode="popLayout">
-                                                      <motion.div
-                                                        key={activeTabId}
-                                                        initial={{ opacity: 0, scale: 0.98, y: 5 }}
-                                                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                                                        exit={{ opacity: 0, scale: 0.98, y: -5 }}
-                                                        transition={{ duration: 0.2 }}
-                                                        className="flex flex-col gap-2"
-                                                      >
-                                                        {activeGroup.events.map((event) => (
-                                                          <EventTile 
-                                                            key={`${event.id}-${activeTabId}`}
-                                                            event={event} 
-                                                            dayIdx={activeDayIdx}
-                                                            eventIdx={event.originalIdx!}
-                                                            isGrouped={true}
-                                                          />
-                                                        ))}
-                                                      </motion.div>
-                                                    </AnimatePresence>
-                                                  </div>
-                                                </>
-                                              );
-                                            })()}
-                                          </div>
-                                ) : (
-                                  <EventTile 
-                                    event={group[0]} 
-                                    dayIdx={activeDayIdx}
-                                    eventIdx={group[0].originalIdx!}
-                                  />
-                                )}
-                              </div>
-                            );
-                          })}
-                      </div>
-                    );
-                  })()}
-                </div>
-    
-                  {isEditing && (
-                    <div className="pl-10 space-y-2">
-                      <button 
-                        onClick={() => setEditingActivity({ dayIdx: activeDayIdx, actIdx: null })}
-                        className="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 flex items-center justify-center gap-2 font-bold hover:border-blue-400 hover:text-blue-500 transition-colors"
-                      >
-                        <Plus className="w-5 h-5" /> Add Event
-                      </button>
-                      <button 
-                        onClick={() => handleAddSuggestionTile(activeDayIdx)}
-                        className="w-full py-3 border-2 border-dashed border-amber-100 rounded-2xl text-amber-400 flex items-center justify-center gap-2 font-bold hover:border-amber-400 hover:text-amber-500 transition-colors bg-amber-50/20"
-                      >
-                        <Sparkles className="w-4 h-4" /> Add Suggestion Tile
-                      </button>
-                    </div>
-                  )}
-              </div>
-            </motion.div>
-          ) : (
-            <div className="p-12 text-center">
-              <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Calendar className="w-8 h-8 text-slate-200" />
-              </div>
-              <p className="text-slate-400 text-sm">No itinerary data available for this day.</p>
               <button 
-                onClick={() => setView('list')}
-                className="mt-4 text-blue-600 text-xs font-bold hover:underline"
+                onClick={() => setIsAiAssistantOpen(false)}
+                className="md:hidden p-1.5 hover:bg-slate-800 rounded-lg text-slate-300"
               >
-                Back to Trips
+                <X className="w-4 h-4" />
               </button>
             </div>
-          )
-        )}
 
-          {activeTab === 'places' && (
-            <motion.div key="places" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full">
-              <PlacesView 
-                itinerary={itinerary}
-                shortlist={shortlist}
-                onAddShortlist={handleAddShortlist}
-                onRemoveShortlist={handleRemoveShortlist}
-                isAdmin={isAdmin}
-                onUpdateItinerary={setItinerary}
-                onSaveToFirestore={saveToFirestore}
-                onNavigateToEvent={(dayIdx, eventId) => {
-                  setActiveDayIdx(dayIdx);
-                  setActiveTab('itinerary');
-                  // Give it a moment to switch tabs and render
-                  setTimeout(() => {
-                    const el = document.getElementById(eventId);
-                    if (el) {
-                      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      // Add a brief highlight effect
-                      el.classList.add('ring-4', 'ring-blue-400', 'ring-offset-2');
-                      setTimeout(() => {
-                        el.classList.remove('ring-4', 'ring-blue-400', 'ring-offset-2');
-                      }, 2000);
-                    }
-                  }, 300); // Slightly longer timeout to ensure tab transition completes
-                }}
-              />
-            </motion.div>
-          )}
-
-          {activeTab === 'gas' && (
-            <motion.div key="gas" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full pb-32">
-              <GasPricesView userLoc={userLoc} />
-            </motion.div>
-          )}
-
-          {activeTab === 'info' && (
-            <motion.div key="info" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full">
-              <div className="p-6 space-y-8 bg-slate-50 min-h-full pb-32">
-                {/* Trip Members */}
-                {members && members.length > 0 && (
-                  <section>
-                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                      <Briefcase className="w-5 h-5 text-blue-600" /> Trip Members
-                    </h2>
-                    <div className="grid grid-cols-2 gap-3">
-                      {members.map((member) => (
-                        <div key={member.id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-                          <div 
-                            className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-black text-white shadow-sm shrink-0"
-                            style={{ backgroundColor: member.color }}
-                          >
-                            {member.initials}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="font-bold text-slate-900 truncate">{member.name}</p>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Member</p>
-                          </div>
-                        </div>
-                      ))}
+            {/* Chat Output Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide bg-slate-50/50 min-w-[250px]">
+              {aiProposal ? (
+                <div className="space-y-3">
+                  <div className="bg-blue-50 rounded-xl p-3 border border-blue-100 text-xs">
+                    <div className="flex justify-between items-start mb-1.5">
+                      <h3 className="font-bold text-blue-900 flex items-center gap-1">
+                        <Wand2 className="w-3.5 h-3.5" /> Proposed Changes
+                      </h3>
                     </div>
-                  </section>
-                )}
-
-                {hasFlightInfo && (
-                  <section>
-                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                      <Plane className="w-5 h-5 text-blue-600" /> Flight Info
-                    </h2>
-                    <div className="space-y-3">
-                      {flightInfo.outbound && (
-                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                          <div className="flex justify-between items-start mb-2">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Outbound • {flightInfo.outbound.date || 'TBD'}</p>
-                            <div className="text-right">
-                              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {flightInfo.outbound.confirmation || 'N/A'}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <div><p className="text-xl font-bold text-slate-900">{flightInfo.outbound.from || 'TBD'}</p></div>
-                            <div className="flex flex-col items-center px-4 flex-1">
-                              <p className="text-[10px] font-bold text-blue-600 mb-1">{flightInfo.outbound.number || '---'}</p>
-                              <div className="w-full h-[1px] bg-slate-200 relative"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
-                            </div>
-                            <div className="text-right"><p className="text-xl font-bold text-slate-900">{flightInfo.outbound.to || 'TBD'}</p></div>
-                          </div>
-                        </div>
-                      )}
-                      {flightInfo.return && (
-                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                          <div className="flex justify-between items-start mb-2">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Return • {flightInfo.return.date || 'TBD'}</p>
-                            <div className="text-right">
-                              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {flightInfo.return.confirmation || 'N/A'}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <div><p className="text-xl font-bold text-slate-900">{flightInfo.return.from || 'TBD'}</p></div>
-                            <div className="flex flex-col items-center px-4 flex-1">
-                              <p className="text-[10px] font-bold text-blue-600 mb-1">{flightInfo.return.number || '---'}</p>
-                              <div className="w-full h-[1px] bg-slate-200 relative rotate-180"><Plane className="w-3 h-3 text-slate-300 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white" /></div>
-                            </div>
-                            <div className="text-right"><p className="text-xl font-bold text-slate-900">{flightInfo.return.to || 'TBD'}</p></div>
-                          </div>
-                        </div>
-                      )}
+                    <p className="text-blue-800 italic">"{aiProposal.explanation}"</p>
+                    <div className="flex gap-2 mt-3">
+                      <button 
+                        onClick={applyAiProposal}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-xs font-bold transition-colors"
+                      >
+                        Apply
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setAiProposal(null);
+                          setRejectedSuggestionIds([]);
+                        }}
+                        className="flex-1 bg-white hover:bg-slate-50 text-slate-600 py-2 rounded-lg text-xs font-bold border transition-colors"
+                      >
+                        Discard
+                      </button>
                     </div>
-                  </section>
-                )}
-                
-                {hasRentalInfo && (
-                  <section>
-                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                      <Car className="w-5 h-5 text-blue-600" /> Rental Car
-                    </h2>
-                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <h3 className="font-bold text-slate-900">{rentalInfo.company || 'Rental Car'}</h3>
-                          <p className="text-xs text-slate-500">{rentalInfo.car || 'Vehicle Details'}</p>
-                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mt-1">Ref: {rentalInfo.confirmation || 'N/A'}</p>
-                        </div>
-                        <div className="p-2 bg-blue-50 rounded-full"><Car className="w-5 h-5 text-blue-600" /></div>
-                      </div>
-                      <div className="space-y-2 mb-4">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-slate-400 font-bold uppercase">Pickup</span>
-                          <span className="text-slate-700 font-medium">{rentalInfo.pickup || 'TBD'}</span>
-                        </div>
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-slate-400 font-bold uppercase">Dropoff</span>
-                          <span className="text-slate-700 font-medium">{rentalInfo.dropoff || 'TBD'}</span>
-                        </div>
-                      </div>
-                      {rentalInfo.phone && (
-                        <a href={`tel:${rentalInfo.phone}`} className="w-full flex items-center justify-center gap-2 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold">Call {rentalInfo.company} <ExternalLink className="w-4 h-4" /></a>
-                      )}
-                    </div>
-                  </section>
-                )}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-12 text-slate-400">
+                  <MessageSquare className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                  <p className="text-sm font-medium leading-relaxed px-4">Tell me what to build or change. I can add activities, suggest items, or auto-fill your plans!</p>
+                </div>
+              )}
+            </div>
 
-                {stays && stays.length > 0 && (
-                  <section>
-                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                      <Home className="w-5 h-5 text-blue-600" /> Stays
-                    </h2>
-                    <div className="space-y-3">
-                      {stays.map((stay, idx) => (
-                        <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                          <div className="flex items-center justify-between mb-2">
-                            <h3 className="font-bold text-slate-900">{stay.name}</h3>
-                            <div className="p-2 bg-blue-50 rounded-full"><Home className="w-4 h-4 text-blue-600" /></div>
-                          </div>
-                          <div className="space-y-1 mb-3">
-                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {stay.location}</p>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{stay.checkIn} — {stay.checkOut}</p>
-                          </div>
-                          <div className="flex items-center justify-between pt-2 border-t border-slate-50">
-                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {stay.confirmation || 'N/A'}</p>
-                            {stay.phone && (
-                              <a href={`tel:${stay.phone}`} className="text-[10px] font-bold text-slate-900 flex items-center gap-1">
-                                <ExternalLink className="w-3 h-3" /> Call
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {restaurants && restaurants.length > 0 && (
-                  <section>
-                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                      <Utensils className="w-5 h-5 text-blue-600" /> Dining Reservations
-                    </h2>
-                    <div className="space-y-3">
-                      {restaurants.map((res, idx) => (
-                        <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                          <div className="flex items-center justify-between mb-2">
-                            <h3 className="font-bold text-slate-900">{res.name}</h3>
-                            <div className="p-2 bg-blue-50 rounded-full"><Utensils className="w-4 h-4 text-blue-600" /></div>
-                          </div>
-                          <div className="flex items-center gap-3 mb-3">
-                            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                              <Calendar className="w-3 h-3" /> {res.date}
-                            </div>
-                            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                              <Clock className="w-3 h-3" /> {res.time}
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between pt-2 border-t border-slate-50">
-                            <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {res.confirmation || 'N/A'}</p>
-                            {res.phone && (
-                              <a href={`tel:${res.phone}`} className="text-[10px] font-bold text-slate-900 flex items-center gap-1">
-                                <ExternalLink className="w-3 h-3" /> Call
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {experiences && experiences.length > 0 && (
-                  <section>
-                    <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                      <Ticket className="w-5 h-5 text-blue-600" /> Experiences
-                    </h2>
-                    <div className="space-y-3">
-                      {experiences.map((exp, idx) => (
-                        <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                          <div className="flex items-center justify-between mb-2">
-                            <h3 className="font-bold text-slate-900">{exp.name}</h3>
-                            <div className="p-2 bg-blue-50 rounded-full"><Ticket className="w-4 h-4 text-blue-600" /></div>
-                          </div>
-                          <div className="space-y-1 mb-3">
-                            <p className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {exp.location || 'TBD'}</p>
-                            <div className="flex items-center gap-3">
-                              <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                <Calendar className="w-3 h-3" /> {exp.date}
-                              </div>
-                              <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                <Clock className="w-3 h-3" /> {exp.time}
-                              </div>
-                            </div>
-                          </div>
-                          {exp.confirmation && (
-                            <div className="pt-2 border-t border-slate-50">
-                              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Ref: {exp.confirmation}</p>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {!hasFlightInfo && !hasRentalInfo && (!stays || stays.length === 0) && (!restaurants || restaurants.length === 0) && (!experiences || experiences.length === 0) && (
-                  <section className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
-                    <p className="text-slate-400 text-sm">No reservation details available for this trip.</p>
-                  </section>
+            {/* Prompt Input Box */}
+            <div className="p-3 border-t border-slate-100 bg-white min-w-[250px] shrink-0">
+              <div className="relative">
+                <textarea 
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="e.g., 'Add a dinner spot on Day 1'"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 pr-11 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none h-20"
+                  disabled={isAiLoading}
+                />
+                {isAiLoading ? (
+                  <div className="absolute right-3 bottom-3">
+                    <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleAiAction('full')}
+                    disabled={!aiPrompt.trim()}
+                    className="absolute right-2 bottom-2 p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg transition-colors shadow-sm"
+                  >
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
                 )}
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-            </main>
-          </>
+            </div>
+          </div>
+          
+          {/* Mobile Overlay for AI Assistant */}
+          <AnimatePresence>
+            {isAiAssistantOpen && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsAiAssistantOpen(false)}
+                className="md:hidden fixed inset-0 bg-slate-900/20 z-40 backdrop-blur-sm"
+              />
+            )}
+          </AnimatePresence>
         </div>
-      </div>
+
     )}
 
       {/* Modals */}
@@ -4928,6 +4207,203 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Event Details Modal */}
+      {selectedEventForModal && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelectedEventForModal(null)}
+            className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+          />
+          
+          {/* Modal Container */}
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-lg overflow-hidden relative z-10 flex flex-col max-h-[85vh]"
+          >
+            {/* Header / Accent Bar */}
+            <div className="px-6 py-5 border-b border-slate-100 flex items-start justify-between bg-slate-50">
+              <div>
+                <span className="text-[10px] font-black text-blue-600 uppercase tracking-wider bg-blue-50 px-2 py-1 rounded-md border border-blue-100">
+                  Day {selectedEventForModal.dayIdx + 1} &bull; {itinerary[selectedEventForModal.dayIdx]?.date}
+                </span>
+                <h3 className="font-display font-bold text-slate-900 text-xl mt-2 leading-tight">
+                  {selectedEventForModal.event.title}
+                </h3>
+              </div>
+              <button 
+                onClick={() => setSelectedEventForModal(null)}
+                className="p-1.5 hover:bg-slate-200 rounded-xl text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Scrollable Content */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1 scrollbar-hide text-sm">
+              {/* Timing */}
+              {(selectedEventForModal.event.startTime || selectedEventForModal.event.endTime) && (
+                <div className="flex items-center gap-2.5 text-slate-500 font-medium">
+                  <Clock className="w-4 h-4 text-slate-400" />
+                  <span>
+                    {selectedEventForModal.event.startTime}
+                    {selectedEventForModal.event.endTime ? ` - ${selectedEventForModal.event.endTime}` : ''}
+                  </span>
+                </div>
+              )}
+
+              {/* Description */}
+              {selectedEventForModal.event.description && (
+                <div className="space-y-1.5">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Notes & Details</h4>
+                  <div className="text-slate-600 leading-relaxed bg-slate-50 p-4 rounded-2xl border border-slate-100 whitespace-pre-wrap">
+                    {selectedEventForModal.event.description.split(/(https?:\/\/[^\s]+)/g).map((part, i) => 
+                      part.match(/^https?:\/\//) ? (
+                        <a key={i} href={part} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                          {part}
+                        </a>
+                      ) : part
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Location with map directions */}
+              {selectedEventForModal.event.location && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Location</h4>
+                  <div className="flex items-center justify-between p-4 bg-blue-50/40 rounded-2xl border border-blue-50">
+                    <div className="flex items-center gap-2 text-slate-700 min-w-0">
+                      <MapPin className="w-5 h-5 text-blue-500 shrink-0" />
+                      <span className="font-bold truncate">{selectedEventForModal.event.location.name}</span>
+                    </div>
+                    <div className="flex gap-1.5 shrink-0">
+                      <a 
+                        href={getAppleMapsUrl(selectedEventForModal.event.location)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 bg-white rounded-xl text-slate-400 hover:text-blue-600 border border-slate-200 shadow-sm transition-colors"
+                        title="Apple Maps"
+                      >
+                        <Navigation className="w-4 h-4" />
+                      </a>
+                      <a 
+                        href={getGoogleMapsUrl(selectedEventForModal.event.location)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 bg-white rounded-xl text-slate-400 hover:text-blue-600 border border-slate-200 shadow-sm transition-colors"
+                        title="Google Maps"
+                      >
+                        <MapIcon className="w-4 h-4" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Travel/Directions detail */}
+              {selectedEventForModal.event.type === 'travel' && selectedEventForModal.event.origin && selectedEventForModal.event.destination && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Route</h4>
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      <span className="truncate max-w-[40%] text-slate-700">{selectedEventForModal.event.origin.name}</span>
+                      <ArrowRight className="w-4 h-4 shrink-0 text-slate-400" />
+                      <span className="truncate max-w-[40%] text-slate-700">{selectedEventForModal.event.destination.name}</span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <a 
+                        href={(() => {
+                          const mode = selectedEventForModal.event.category === 'walk' ? 'w' : selectedEventForModal.event.category === 'transit' ? 'r' : 'd';
+                          const saddr = encodeURIComponent(selectedEventForModal.event.origin?.name || '');
+                          const daddr = encodeURIComponent(selectedEventForModal.event.destination?.name || '');
+                          return `https://maps.apple.com/?saddr=${saddr}&daddr=${daddr}&ll=${selectedEventForModal.event.destination?.lat},${selectedEventForModal.event.destination?.lng}&dirflg=${mode}`;
+                        })()}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 flex items-center justify-center gap-2 py-2 bg-white rounded-xl text-slate-600 hover:text-blue-600 border border-slate-200 shadow-sm font-bold text-xs transition-colors"
+                      >
+                        <Navigation className="w-3.5 h-3.5" /> Apple Directions
+                      </a>
+                      <a 
+                        href={(() => {
+                          const mode = selectedEventForModal.event.category === 'walk' ? 'walking' : selectedEventForModal.event.category === 'transit' ? 'transit' : 'driving';
+                          return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(selectedEventForModal.event.origin?.name || '')}&destination=${encodeURIComponent(selectedEventForModal.event.destination?.name || '')}&travelmode=${mode}`;
+                        })()}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 flex items-center justify-center gap-2 py-2 bg-white rounded-xl text-slate-600 hover:text-blue-600 border border-slate-200 shadow-sm font-bold text-xs transition-colors"
+                      >
+                        <MapIcon className="w-3.5 h-3.5" /> Google Directions
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Suggestions */}
+              {selectedEventForModal.event.suggestions && selectedEventForModal.event.suggestions.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Alternative Suggestions</h4>
+                  <div className="space-y-2">
+                    {selectedEventForModal.event.suggestions.map((sug, sIdx) => {
+                      return (
+                        <div key={sIdx} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-800 text-xs truncate">{sug.name}</p>
+                            {sug.description && <p className="text-[10px] text-slate-400 truncate mt-0.5">{sug.description}</p>}
+                          </div>
+                          {isAdmin && (
+                            <button 
+                              onClick={() => {
+                                handleSelectSuggestion(selectedEventForModal.dayIdx, selectedEventForModal.event.id, sug);
+                                setSelectedEventForModal(null); // Close details modal upon selection
+                              }}
+                              className="px-2.5 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider hover:bg-blue-700 shadow-sm transition-colors"
+                            >
+                              Select
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3 shrink-0">
+              {isAdmin && (
+                <button 
+                  onClick={() => {
+                    const dIdx = selectedEventForModal.dayIdx;
+                    const actIdx = selectedEventForModal.eventIdx;
+                    setSelectedEventForModal(null);
+                    setEditingActivity({ dayIdx: dIdx, actIdx });
+                  }}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded-xl text-slate-700 font-bold text-xs transition-colors flex items-center gap-1.5"
+                >
+                  <Edit2 className="w-3.5 h-3.5" /> Edit Details
+                </button>
+              )}
+              <button 
+                onClick={() => setSelectedEventForModal(null)}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {editingActivity && (
         <EditActivityModal 
           activity={editingActivity.actIdx !== null 
@@ -4942,20 +4418,19 @@ export default function App() {
 
       {/* Bottom Navigation */}
       {view === 'itinerary' && (
-        <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto md:hidden bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-around items-center z-50">
-          <button onClick={() => setActiveTab('itinerary')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'itinerary' ? "text-blue-600" : "text-slate-400")} title="View Itinerary">
-            <Calendar className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Itinerary</span>
+        <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto md:hidden bg-white/80 backdrop-blur-xl border-t border-slate-100 px-2 py-2 pb-6 flex justify-around items-center z-50">
+          <button onClick={() => setActiveTab('calendar')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'calendar' && !isAiAssistantOpen ? "text-blue-600" : "text-slate-400")} title="View Calendar">
+            <Calendar className="w-5 h-5" /><span className="text-[9px] font-bold uppercase tracking-wider">Calendar</span>
           </button>
-          <button onClick={() => setActiveTab('places')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'places' ? "text-blue-600" : "text-slate-400")} title="View Shortlisted Places">
-            <MapPin className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Places</span>
+          <button onClick={() => setActiveTab('places')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'places' && !isAiAssistantOpen ? "text-blue-600" : "text-slate-400")} title="View Shortlisted Places">
+            <MapPin className="w-5 h-5" /><span className="text-[9px] font-bold uppercase tracking-wider">Places</span>
           </button>
-          {hasDriving && rentalInfo && (
-            <button onClick={() => setActiveTab('gas')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'gas' ? "text-blue-600" : "text-slate-400")} title="Gas & Logistics">
-              <Fuel className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Gas</span>
-            </button>
-          )}
-          <button onClick={() => setActiveTab('info')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'info' ? "text-blue-600" : "text-slate-400")} title="Reservations & Bookings">
-            <Info className="w-6 h-6" /><span className="text-[10px] font-bold uppercase tracking-wider">Reservations</span>
+          <button onClick={() => setIsAiAssistantOpen(!isAiAssistantOpen)} className={cn("flex flex-col items-center gap-1 transition-colors relative", isAiAssistantOpen ? "text-indigo-600" : "text-slate-400")} title="AI Assistant">
+            <Sparkles className={cn("w-5 h-5", isAiAssistantOpen && "animate-pulse")} />
+            <span className="text-[9px] font-bold uppercase tracking-wider">Magic AI</span>
+          </button>
+          <button onClick={() => setActiveTab('info')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'info' && !isAiAssistantOpen ? "text-blue-600" : "text-slate-400")} title="Reservations & Bookings">
+            <Info className="w-5 h-5" /><span className="text-[9px] font-bold uppercase tracking-wider">Bookings</span>
           </button>
         </nav>
       )}

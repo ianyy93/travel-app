@@ -50,7 +50,13 @@ export const weatherService = {
         return null;
       }
 
-      const res = await fetch(url);
+      // Use the server-side proxy to bypass CORS/sandboxed iframe fetch blocks
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const proxyUrl = `${origin}/api/weather?lat=${loc.lat}&lng=${loc.lng}&date=${dateString}&isArchive=${diffDays < 0}`;
+      const res = await fetch(proxyUrl);
+      if (!res.ok) {
+        throw new Error(`Weather proxy returned status ${res.status}`);
+      }
       const data = await res.json();
 
       if (data.daily && data.daily.temperature_2m_max && data.daily.temperature_2m_max[0] !== undefined) {

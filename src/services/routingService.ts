@@ -14,8 +14,9 @@ export async function getRealTravelTimeMins(
   }
 
   try {
-    // We use the OSRM public demo server. It is free and requires no API key.
-    const response = await fetch(`https://router.project-osrm.org/route/v1/${profile}/${lon1},${lat1};${lon2},${lat2}?overview=false`);
+    // Fetch via backend proxy to bypass CORS/sandboxed iframe fetch blocks
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const response = await fetch(`${origin}/api/routing?profile=${profile}&coordinates=${lon1},${lat1};${lon2},${lat2}`);
     if (!response.ok) return null;
     const data = await response.json();
     if (data.routes && data.routes[0]) {
