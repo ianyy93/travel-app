@@ -98,6 +98,7 @@ import { geminiService, GeminiProposal, GenerationMode } from './services/gemini
 import { getRealTravelTimeMins } from './services/routingService';
 import { gasService } from './services/gasService';
 import { Fuel, Share2 } from 'lucide-react';
+import { GmailImport } from './components/GmailImport';
 
 // Fix Leaflet icon issues
 // @ts-ignore
@@ -1186,6 +1187,7 @@ export default function App() {
   const [editingActivity, setEditingActivity] = useState<{ dayIdx: number, actIdx: number | null } | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
+  const [deletingTripIds, setDeletingTripIds] = useState<Set<string>>(new Set());
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [view, setView] = useState<'itinerary' | 'list' | 'travellers'>('list');
@@ -1218,6 +1220,9 @@ export default function App() {
   const [rejectedAssumptionIdxs, setRejectedAssumptionIdxs] = useState<number[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
     const [aiPrompt, setAiPrompt] = useState('');
+  
+  const displayItinerary = aiProposal ? (aiProposal.itinerary || itinerary) : itinerary;
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridScrollContainerRef = useRef<HTMLDivElement>(null);
   const [weatherData, setWeatherData] = useState<Record<number, WeatherInfo>>({});
@@ -1394,6 +1399,13 @@ export default function App() {
     const applyAiProposal = async () => {
       if (!aiProposal) return;
       
+      // Safety guard: If the existing itinerary is non-empty, but the AI proposal's itinerary is empty or has no events,
+      // we must NOT wipe out the existing itinerary. We should warn the user or fall back to preserving the existing itinerary.
+      if (view !== 'list' && itinerary.length > 0 && (!aiProposal.itinerary || aiProposal.itinerary.length === 0)) {
+        console.warn("[applyAiProposal] AI Proposal itinerary is empty or invalid, preserving existing itinerary to protect user data.");
+        aiProposal.itinerary = JSON.parse(JSON.stringify(itinerary));
+      }
+      
       const firstDayDate = aiProposal.itinerary[0]?.date || '';
       const lastDayDate = aiProposal.itinerary[aiProposal.itinerary.length - 1]?.date || '';
       const inferredDates = firstDayDate && lastDayDate ? `${firstDayDate} - ${lastDayDate}` : '';
@@ -1402,14 +1414,11 @@ export default function App() {
       const filteredItinerary = aiProposal.itinerary.map(day => ({
         ...day,
         events: day.events.filter(event => {
-          if (event.type === 'travel') {
-            return false; // Strictly strip out any AI travel hallucinations masquerading as activities
-          }
-          if (!event.location && (event.category === 'transit' || event.category === 'drive' || event.category === 'flight')) {
-            return false; // AI generated an activity of travel category but forgot to give it a location
-          }
           if (event.title.toLowerCase().startsWith('transit to') || event.title.toLowerCase().startsWith('travel to') || event.title.toLowerCase().startsWith('drive to')) {
             return false;
+          }
+          if (!event.location && (event.category === 'transit' || event.category === 'drive')) {
+            return false; // Transit/Drive without location is usually a placeholder
           }
           const suggestion = aiProposal.suggestions?.find(s => s.relatedId === event.id);
           if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
@@ -1432,7 +1441,7 @@ export default function App() {
         if (isGeneric) return false;
         
         // Also filter if it's a rejected suggestion
-        const suggestion = aiProposal.suggestions?.find(s => s.text.includes(p.name));
+        const suggestion = aiProposal.suggestions?.find(s => (s.text || '').includes(p.name));
         if (suggestion && rejectedSuggestionIds.includes(suggestion.id)) {
           return false;
         }
@@ -1600,6 +1609,10 @@ export default function App() {
       return;
     }
     const targetId = tripIdOverride || currentTripId;
+    if (deletingTripIds.has(targetId)) {
+      console.log(`UI: Skipping save for ${targetId} as it is being deleted.`);
+      return;
+    }
     const path = `trips/${targetId}`;
     const tripDoc = doc(db, 'trips', targetId);
     
@@ -1778,29 +1791,73 @@ export default function App() {
   const handleDeleteTrip = async (tripId: string) => {
     console.log('--- DELETE PROCESS START ---');
     console.log('Target Trip ID:', tripId);
-    console.log('Current User:', auth.currentUser?.email);
-    console.log('Is Admin:', isAdmin);
-
+    
     if (!isAdmin) {
       console.error('Delete aborted: User is not an admin.');
       setLoginError("You do not have permission to delete trips.");
+      alert("You do not have permission to delete trips.");
       return;
     }
+
+    // Mark as deleting to prevent accidental recreation by auto-save
+    setDeletingTripIds(prev => {
+      const next = new Set(prev);
+      next.add(tripId);
+      return next;
+    });
     
     try {
-      console.log('Executing Firestore deleteDoc...');
+      console.log(`UI: Attempting to delete trip ${tripId}...`);
+      // Update local state immediately for instant feedback
+      setTripsList(prev => prev.filter(t => t.id !== tripId));
+
+      // Clear current trip ID first if we are deleting the active trip 
+      const wasActiveTrip = currentTripId === tripId;
+      if (wasActiveTrip) {
+        setCurrentTripId('main');
+        setView('list');
+      }
+
+      console.log('Executing Firestore deleteDoc for main doc...');
       const docRef = doc(db, 'trips', tripId);
+      
+      // Also try to clear history subcollection if possible (best effort)
+      try {
+        const historyRef = collection(db, 'trips', tripId, 'history');
+        const historySnap = await getDocs(historyRef);
+        if (!historySnap.empty) {
+          const batch = writeBatch(db);
+          historySnap.docs.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+          console.log('History subcollection cleared.');
+        }
+      } catch (hErr) {
+        console.warn('Failed to clear history subcollection (might be empty or restricted):', hErr);
+      }
+
       await deleteDoc(docRef);
       console.log('Firestore deleteDoc successful.');
-      
-      if (currentTripId === tripId) {
-        console.log('Current trip was deleted, redirecting to main...');
-        setCurrentTripId('main');
-      }
       console.log('--- DELETE PROCESS COMPLETE ---');
     } catch (error) {
       console.error('Firestore deleteDoc FAILED:', error);
+      setLoginError(`Failed to delete trip: ${error instanceof Error ? error.message : String(error)}`);
       handleFirestoreError(error, OperationType.DELETE, `trips/${tripId}`);
+      
+      // Remove from deleting set so user can try again if it failed
+      setDeletingTripIds(prev => {
+        const next = new Set(prev);
+        next.delete(tripId);
+        return next;
+      });
+    } finally {
+      // Keep in deleting set for a bit longer to catch late auto-saves
+      setTimeout(() => {
+        setDeletingTripIds(prev => {
+          const next = new Set(prev);
+          next.delete(tripId);
+          return next;
+        });
+      }, 5000);
     }
   };
 
@@ -1932,7 +1989,7 @@ export default function App() {
   };
 
   const recalculateRoutesAroundEvent = (dayIdx: number, eventId: string, inputItin: DayPlan[], explicitRentalInfo?: any) => {
-    const hasRental = explicitRentalInfo !== undefined ? 
+    const hasRental = (explicitRentalInfo !== undefined && explicitRentalInfo !== null) ? 
        !!(explicitRentalInfo.company || explicitRentalInfo.car || explicitRentalInfo.confirmation) :
        hasRentalInfo;
     const baseMode: TripCategory = hasRental ? 'drive' : 'transit';
@@ -2432,14 +2489,14 @@ export default function App() {
           date: dates,
           year
         };
-      });
+      }).filter(t => !deletingTripIds.has(t.id));
       setTripsList(trips);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'trips');
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, deletingTripIds]);
 
   // Scroll to earliest event time in Grid (All Days) view
   useEffect(() => {
@@ -2493,11 +2550,28 @@ export default function App() {
     });
   };
 
-  const handleAddTrip = () => {
-    const id = prompt("Enter a unique ID for the new trip (e.g. japan-2027):");
-    if (id) {
-      setCurrentTripId(id);
-      setView('itinerary');
+  const handleAddTrip = async () => {
+    console.log('UI: handleAddTrip called');
+    // Generate a human-readable but unique ID
+    const baseId = 'new-trip';
+    const timestamp = Date.now().toString(36);
+    const id = `${baseId}-${timestamp}`;
+    
+    // Set local state first
+    setCurrentTripId(id);
+    setTripTitle('New Trip');
+    setItinerary([]);
+    setTripDates('Dates TBD');
+    setView('itinerary');
+    setIsEditing(true);
+    setIsAiAssistantOpen(true); // Open AI assistant to help build the new trip
+
+    // Save to Firestore immediately so it appears in the list
+    try {
+      await saveToFirestore([], 'New Trip', 'Dates TBD', false, [], id);
+      console.log('UI: New trip document created successfully:', id);
+    } catch (err) {
+      console.error('UI: Failed to create initial trip document:', err);
     }
   };
 
@@ -2902,7 +2976,7 @@ export default function App() {
         
         {/* Member Initials - Top Right Inside */}
         {(!isGrouped || tabId === 'everyone') && event.memberIds && event.memberIds.length > 0 && (
-          <div className={cn("absolute flex -space-x-1 z-20", isGridMode ? "top-1 right-1" : "top-4 right-4 -space-x-1.5")}>
+          <div className={cn("absolute flex -space-x-1 z-10", isGridMode ? "top-1 right-1" : "top-4 right-4 -space-x-1.5")}>
             {expandMembers(event.memberIds, masterTravellers).map(mid => {
               const member = masterTravellers.find(m => m.id === mid);
               if (!member) return null;
@@ -3042,15 +3116,15 @@ export default function App() {
           {isGridMode ? (
             event.type === 'travel' ? (
               <div className="mt-0.5 flex items-center gap-1 text-[8.5px] font-medium text-slate-500 uppercase tracking-tight truncate">
-                <span>{event.origin?.name}</span>
+                <span>{typeof event.origin === 'string' ? event.origin : event.origin?.name}</span>
                 <ArrowRight className="w-2.5 h-2.5 text-slate-400 shrink-0" />
-                <span>{event.destination?.name}</span>
+                <span>{typeof event.destination === 'string' ? event.destination : event.destination?.name}</span>
               </div>
             ) : (
               event.location && (
                 <div className="mt-0.5 flex items-center gap-1 text-[8.5px] font-medium text-slate-400 truncate">
                   <MapPin className="w-2.5 h-2.5 text-slate-400 shrink-0" />
-                  <span>{event.location.name}</span>
+                  <span>{typeof event.location === 'string' ? event.location : event.location.name}</span>
                 </div>
               )
             )
@@ -3059,9 +3133,9 @@ export default function App() {
               <div className="mt-1 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider min-w-0">
-                    <span className="truncate">{event.origin?.name}</span>
+                    <span className="truncate">{typeof event.origin === 'string' ? event.origin : event.origin?.name}</span>
                     <ArrowRight className="w-3 h-3 shrink-0" />
-                    <span className="truncate">{event.destination?.name}</span>
+                    <span className="truncate">{typeof event.destination === 'string' ? event.destination : event.destination?.name}</span>
                   </div>
                   {event.origin && event.destination && (
                     <div className="flex gap-1 shrink-0">
@@ -3134,30 +3208,32 @@ export default function App() {
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-[10px] font-bold text-blue-600 uppercase tracking-wider min-w-0">
                     <MapPin className="w-2.5 h-2.5 shrink-0" />
-                    <span className="truncate">{event.location.name}</span>
+                    <span className="truncate">{typeof event.location === 'string' ? event.location : event.location.name}</span>
                   </div>
-                  <div className="flex gap-1 shrink-0">
-                    <a 
-                      href={getAppleMapsUrl(event.location)}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                      title="Apple Maps"
-                    >
-                      <Navigation className="w-3 h-3" />
-                    </a>
-                    <a 
-                      href={getGoogleMapsUrl(event.location)}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
-                      title="Google Maps"
-                    >
-                      <MapIcon className="w-3 h-3" />
-                    </a>
-                  </div>
+                  {typeof event.location === 'object' && (
+                    <div className="flex gap-1 shrink-0">
+                      <a 
+                        href={getAppleMapsUrl(event.location)}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                        title="Apple Maps"
+                      >
+                        <Navigation className="w-3 h-3" />
+                      </a>
+                      <a 
+                        href={getGoogleMapsUrl(event.location)}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="p-1.5 bg-white rounded-lg text-slate-400 hover:text-blue-600 border border-slate-100 shadow-sm"
+                        title="Google Maps"
+                      >
+                        <MapIcon className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
                 </div>
               )
             )
@@ -3311,6 +3387,15 @@ export default function App() {
           <div className="flex items-center gap-2">
             {view === 'list' && isAdmin && (
               <button 
+                onClick={handleAddTrip}
+                className="p-2 bg-blue-600 text-white rounded-full shadow-lg shadow-blue-100"
+                title="Create New Trip"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            )}
+            {view === 'list' && isAdmin && (
+              <button 
                 onClick={() => setIsAiAssistantOpen(!isAiAssistantOpen)}
                 className={cn(
                   "p-2 rounded-full transition-all",
@@ -3319,6 +3404,32 @@ export default function App() {
                 title="AI Assistant"
               >
                 <Sparkles className="w-5 h-5" />
+              </button>
+            )}
+            {view === 'itinerary' && isAdmin && (
+              <button 
+                onClick={() => {
+                  if (confirmDeleteId === currentTripId) {
+                    handleDeleteTrip(currentTripId);
+                    setConfirmDeleteId(null);
+                  } else {
+                    setConfirmDeleteId(currentTripId);
+                    // Auto-reset after 4 seconds
+                    setTimeout(() => setConfirmDeleteId(current => current === currentTripId ? null : current), 4000);
+                  }
+                }}
+                className={cn(
+                  "p-2 rounded-full transition-all flex items-center gap-1",
+                  confirmDeleteId === currentTripId 
+                    ? "bg-red-600 text-white px-3" 
+                    : "bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                )}
+                title={confirmDeleteId === currentTripId ? "Confirm Delete" : "Delete Trip"}
+              >
+                <Trash2 className="w-5 h-5" />
+                {confirmDeleteId === currentTripId && (
+                  <span className="text-[10px] font-black uppercase tracking-tighter">Confirm Delete?</span>
+                )}
               </button>
             )}
             {view === 'itinerary' && isAdmin && itineraryHistory.length > 0 && (
@@ -3526,16 +3637,33 @@ export default function App() {
         )}
       </header>
 
-      {view === 'travellers' ? (
-        <TravellersView 
-          travellers={masterTravellers} 
-          onUpdate={(list) => {
-            setMasterTravellers(list);
-            setDoc(doc(db, 'settings', 'travellers'), sanitizeForFirestore({ list })).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/travellers'));
-          }} 
-        />
-      ) : view === 'list' ? (
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 flex overflow-hidden relative">
+        <div className={cn(
+          "flex-1 flex flex-col h-full transition-all duration-300 relative",
+          isAiAssistantOpen ? "w-full md:w-[70%]" : "w-full"
+        )}>
+          {view === 'travellers' ? (
+            <TravellersView 
+              travellers={masterTravellers} 
+              onUpdate={(list) => {
+                setMasterTravellers(list);
+                setDoc(doc(db, 'settings', 'travellers'), sanitizeForFirestore({ list })).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/travellers'));
+              }} 
+            />
+          ) : view === 'list' ? (
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {isAdmin && (
+            <button 
+              onClick={handleAddTrip}
+              className="w-full p-6 bg-white border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center gap-3 text-slate-400 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50/30 transition-all group"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
+                <Plus className="w-6 h-6" />
+              </div>
+              <span className="font-black uppercase tracking-widest text-[10px]">Create New Trip</span>
+            </button>
+          )}
+
           {tripsList.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
               <p className="text-slate-400 text-sm">No trips found. Create your first one!</p>
@@ -3560,43 +3688,15 @@ export default function App() {
                       const displayTitle = trip.title.replace(/\s*\d{4}\s*/g, ' ').trim();
                       const isConfirming = confirmDeleteId === trip.id;
                       return (
-                        <div key={trip.id} className="relative overflow-hidden rounded-3xl group">
-                          {/* Delete Action (Behind) */}
-                          <div className={cn(
-                            "absolute inset-0 flex items-center justify-end px-6 z-0 transition-colors duration-300",
-                            isConfirming ? "bg-red-600" : "bg-red-500"
-                          )}>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (isConfirming) {
-                                  console.log('UI: Delete confirmed for trip:', trip.id);
-                                  handleDeleteTrip(trip.id);
-                                  setConfirmDeleteId(null);
-                                } else {
-                                  setConfirmDeleteId(trip.id);
-                                  // Auto-hide confirm after 3 seconds
-                                  setTimeout(() => setConfirmDeleteId(null), 3000);
-                                }
-                              }}
-                              className="text-white flex flex-col items-center gap-1 cursor-pointer relative z-10 p-4 active:scale-90 transition-transform"
-                            >
-                              <Trash2 className="w-6 h-6" />
-                              <span className="text-[10px] font-black uppercase tracking-tighter">
-                                {isConfirming ? "Tap to Confirm" : "Delete"}
-                              </span>
-                            </button>
-                          </div>
-
+                        <div key={trip.id} className="relative group">
                           <motion.div
-                            drag="x"
-                            dragConstraints={{ left: -100, right: 0 }}
-                            dragElastic={0.1}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
                             className={cn(
-                              "relative w-full text-left p-5 rounded-3xl border transition-all",
+                              "relative w-full text-left p-5 rounded-3xl border transition-all cursor-pointer",
                               currentTripId === trip.id 
                                 ? "bg-blue-600 border-blue-500 text-white shadow-xl shadow-blue-100" 
-                                : "bg-white border-slate-100 hover:border-blue-200 text-slate-900"
+                                : "bg-white border-slate-100 hover:border-blue-200 text-slate-900 shadow-sm"
                             )}
                             onClick={() => {
                               setCurrentTripId(trip.id);
@@ -3613,10 +3713,41 @@ export default function App() {
                                 </p>
                                 <h3 className="text-lg font-black tracking-tight leading-tight">{displayTitle}</h3>
                               </div>
-                              <ChevronRight className={cn(
-                                "w-5 h-5 transition-transform group-hover:translate-x-1",
-                                currentTripId === trip.id ? "text-blue-200" : "text-slate-300"
-                              )} />
+                              <div className="flex items-center gap-2">
+                                {isAdmin && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (confirmDeleteId === trip.id) {
+                                        console.log('UI: Delete confirmed for trip via Quick Delete:', trip.id);
+                                        handleDeleteTrip(trip.id);
+                                        setConfirmDeleteId(null);
+                                      } else {
+                                        console.log('UI: Quick Delete clicked for:', trip.id);
+                                        setConfirmDeleteId(trip.id);
+                                        // Auto-reset after 4 seconds
+                                        setTimeout(() => setConfirmDeleteId(current => current === trip.id ? null : current), 4000);
+                                      }
+                                    }}
+                                    className={cn(
+                                      "p-2 rounded-full transition-all flex items-center gap-1",
+                                      confirmDeleteId === trip.id 
+                                        ? "bg-red-500 text-white shadow-lg scale-105" 
+                                        : "text-slate-300 hover:text-red-500 hover:bg-red-50 md:opacity-0 md:group-hover:opacity-100"
+                                    )}
+                                    title={confirmDeleteId === trip.id ? "Confirm Delete" : "Quick Delete"}
+                                  >
+                                    <Trash2 className={cn("transition-transform", confirmDeleteId === trip.id ? "w-3 h-3" : "w-4 h-4")} />
+                                    {confirmDeleteId === trip.id && (
+                                      <span className="text-[10px] font-black uppercase tracking-tighter pr-1">Confirm?</span>
+                                    )}
+                                  </button>
+                                )}
+                                <ChevronRight className={cn(
+                                  "w-5 h-5 transition-transform group-hover:translate-x-1",
+                                  currentTripId === trip.id ? "text-blue-200" : "text-slate-300"
+                                )} />
+                              </div>
                             </div>
                           </motion.div>
                         </div>
@@ -3645,14 +3776,9 @@ export default function App() {
               )}
             </div>
           )}
-        </div>
-      ) : (
-                <div className="flex-1 flex overflow-hidden relative">
-          {/* Main Content Area */}
-          <div className={cn(
-            "flex flex-col h-full transition-all duration-300 relative",
-            isAiAssistantOpen ? "w-full md:w-[70%]" : "w-full"
-          )}>
+            </div>
+          ) : (
+            <div className="flex flex-col h-full relative">
             {/* Desktop Tabs Header (Mobile uses bottom nav) */}
             <div className="hidden md:flex p-3 bg-white border-b border-slate-100 items-center justify-between shrink-0">
                <div className="flex gap-2">
@@ -3725,9 +3851,9 @@ export default function App() {
                     
                     {calendarViewMode === 'schedule' ? (
                       <div className="p-4 md:p-6 space-y-8 pb-32">
-                         {itinerary.map((day, dIdx) => (
+                         {displayItinerary.map((day, dIdx) => (
                            <div key={dIdx} className="space-y-4 relative">
-                             <div className="sticky top-0 z-10 bg-slate-50/90 backdrop-blur-md py-2 md:py-3 border-b border-slate-200/60 flex items-baseline justify-between px-1">
+                             <div className="sticky top-0 z-30 bg-slate-50/90 backdrop-blur-md py-2 md:py-3 border-b border-slate-200/60 flex items-baseline justify-between px-1">
                                <div>
                                  <h3 className="font-display font-bold text-slate-900 text-base md:text-lg">Day {dIdx + 1} <span className="text-slate-400 font-normal">| {day.date}</span></h3>
                                  {day.title && <p className="text-xs md:text-sm text-slate-500 font-medium">{day.title}</p>}
@@ -3749,13 +3875,28 @@ export default function App() {
                              )}
                            </div>
                          ))}
+                         {isAdmin && (
+                           <button 
+                             onClick={() => {
+                               const nextDayNum = itinerary.length + 1;
+                               const newDay = { date: `Day ${nextDayNum}`, events: [] };
+                               const newItinerary = [...itinerary, newDay];
+                               setItinerary(newItinerary);
+                               saveToFirestore(newItinerary, tripTitle, tripDates);
+                             }}
+                             className="w-full py-4 bg-white border-2 border-dashed border-slate-200 rounded-3xl flex items-center justify-center gap-2 text-slate-400 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50/30 transition-all group mt-4"
+                           >
+                             <Plus className="w-5 h-5" />
+                             <span className="font-black uppercase tracking-widest text-[10px]">Add Day</span>
+                           </button>
+                         )}
                       </div>
                     ) : (
                       <div ref={gridScrollContainerRef} className="flex-1 overflow-auto bg-slate-50 relative pb-20 scrollbar-hide">
                         <div className="flex min-w-max min-h-max relative">
                           {/* Time Axis */}
-                          <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-30">
-                            <div className="h-[88px] border-b border-slate-200 bg-white sticky top-0 z-40" />
+                          <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-40">
+                            <div className="h-[88px] border-b border-slate-200 bg-white sticky top-0 z-50" />
                             <div className="relative" style={{ height: 24 * hourHeight }}>
                               {Array.from({ length: 24 }).map((_, h) => (
                                 <div key={h} className="absolute w-full text-right pr-2 text-[10px] font-bold text-slate-400" style={{ top: h * hourHeight - 8 }}>
@@ -3775,7 +3916,7 @@ export default function App() {
 
                           {/* Day Columns */}
                           <div className="flex">
-                            {itinerary.map((day, i) => {
+                            {displayItinerary.map((day, i) => {
                               // Compute layout for overlapping events
                               const computeOverlappingLayout = (events = []) => {
                                 const prepared = events.map((event, idx) => {
@@ -3872,7 +4013,7 @@ export default function App() {
                               return (
                                 <div key={i} className="w-72 shrink-0 border-r border-slate-200 relative flex flex-col z-10">
                                   {/* Header */}
-                                  <div className="h-[88px] p-4 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-20 overflow-hidden shrink-0">
+                                  <div className="h-[88px] p-4 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-30 overflow-hidden shrink-0">
                                     <div className="flex justify-between items-center mb-1">
                                       <h3 className="font-display font-bold text-slate-800 text-lg">Day {i + 1}</h3>
                                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider bg-white px-2 py-1 rounded-md border border-slate-200">
@@ -3928,6 +4069,10 @@ export default function App() {
 
                 {activeTab === 'info' && (
                   <motion.div key="info" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="p-4 md:p-6 space-y-6 pb-32">
+                      <GmailImport onProposalReceived={(proposal) => {
+                        setAiProposal(proposal);
+                        setIsAiAssistantOpen(true);
+                      }} currentItinerary={itinerary} tripTitle={tripTitle} tripDates={tripDates} />
                       {/* Flights */}
                       {flightInfo && (
                         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
@@ -3996,8 +4141,10 @@ export default function App() {
               </AnimatePresence>
             </div>
           </div>
+        )}
+      </div>
 
-          {/* Mobile Backdrop */}
+        {/* Mobile Backdrop */}
           <AnimatePresence>
             {isAiAssistantOpen && (
               <motion.div 
@@ -4106,9 +4253,7 @@ export default function App() {
               />
             )}
           </AnimatePresence>
-        </div>
-
-    )}
+      </div>
 
       {/* Modals */}
       <AnimatePresence>

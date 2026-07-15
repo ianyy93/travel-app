@@ -10,4 +10,4 @@ export const auth = getAuth(app);
 // even inside a non-incognito iframe.
 setPersistence(auth, browserLocalPersistence).catch(err => console.error("Auth persistence error:", err));
 
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
