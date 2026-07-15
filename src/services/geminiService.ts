@@ -67,8 +67,20 @@ export const geminiService = {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Failed to propose changes: ${response.statusText}`);
+      let errorMessage = `Failed to propose changes: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        if (errorData.error) {
+          errorMessage = errorData.error;
+        }
+      } catch (e) {
+        // Fallback if not JSON
+        const text = await response.text().catch(() => "");
+        if (text && text.length < 200 && text.includes("{")) {
+           errorMessage = `Server Error (${response.status}): ${text}`;
+        }
+      }
+      throw new Error(errorMessage);
     }
 
     

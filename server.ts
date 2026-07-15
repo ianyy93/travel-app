@@ -700,7 +700,7 @@ app.post("/api/gemini/propose", async (req, res) => {
                   lat: { type: Type.NUMBER },
                   lng: { type: Type.NUMBER }
                 },
-                required: ["date", "category", "startTime", "endTime", "title"]
+                required: ["date", "category", "startTime", "endTime", "title", "locationName", "lat", "lng"]
               }
             },
             explanation: { type: Type.STRING },
@@ -814,6 +814,8 @@ app.post("/api/gemini/propose", async (req, res) => {
       modeInstruction = 'FOCUS ONLY on adding navigation/travel events (drive, walk, transit) between existing activities in the itinerary. Do not add new activities.';
     } else if (mode === 'autofill') {
       modeInstruction = 'FOCUS ON identifying gaps in the itinerary. Add placeholder events ("pending-meal", "suggestion") with 3-5 options based on the Shortlist and logical suggestions. DO NOT invent confirmed activities.';
+    } else if (mode === 'shortlist') {
+      modeInstruction = 'FOCUS ON researching and finding interesting places, restaurants, or experiences based on the user prompt. DO NOT modify the itinerary. Put ALL findings into the root-level "shortlist" array. Ensure every item has a name, category, description, and accurate coordinates.';
     }
 
     const systemInstruction = `
@@ -1010,9 +1012,11 @@ app.post("/api/gemini/propose", async (req, res) => {
                   properties: {
                     lat: { type: Type.NUMBER },
                     lng: { type: Type.NUMBER }
-                  }
+                  },
+                  required: ["lat", "lng"]
                 }
-              }
+              },
+              required: ["name", "category", "description", "location"]
             }
           },
           flightInfo: {
@@ -1145,7 +1149,8 @@ app.post("/api/gemini/propose", async (req, res) => {
   } catch (error: any) {
     console.error(`[Server] Propose Changes Error:`, error);
     const friendlyMsg = getFriendlyErrorMessage(error);
-    res.status(500).json({ error: friendlyMsg });
+    const finalError = friendlyMsg || "An unexpected server-side error occurred while proposing changes.";
+    res.status(500).json({ error: finalError });
   }
 });
 
@@ -1231,7 +1236,8 @@ app.post("/api/gemini/refine", async (req, res) => {
   } catch (error: any) {
     console.error(`[Server] Refine Suggestions Error:`, error);
     const friendlyMsg = getFriendlyErrorMessage(error);
-    res.status(500).json({ error: friendlyMsg });
+    const finalError = friendlyMsg || "An unexpected server-side error occurred while refining suggestions.";
+    res.status(500).json({ error: finalError });
   }
 });
 

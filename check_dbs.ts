@@ -8,17 +8,17 @@ async function check() {
   const dbs = [firebaseConfig.firestoreDatabaseId, '(default)', ''];
   
   for (const dbId of dbs) {
-    console.log(\`\n--- Checking DB: "${dbId}" ---\`);
+    console.log(`\n--- Checking DB: "${dbId}" ---`);
     try {
       const db = getFirestore(app, dbId);
       const col = collection(db, 'trips');
       const snap = await getDocs(col);
-      console.log(\`Found \${snap.docs.length} trips:\`);
+      console.log(`Found ${snap.docs.length} trips:`);
       snap.docs.forEach(d => {
-        console.log(\`- ID: \${d.id} | Title: \`, d.data().title);
+        console.log(`- ID: ${d.id} | Title: `, d.data().title);
       });
     } catch (err: any) {
-      console.log(\`Error in \${dbId}: \${err.message}\`);
+      console.log(`Error in ${dbId}: ${err.message}`);
     }
   }
 }

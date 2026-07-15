@@ -3853,22 +3853,53 @@ export default function App() {
                       <div className="p-4 md:p-6 space-y-8 pb-32">
                          {displayItinerary.map((day, dIdx) => (
                            <div key={dIdx} className="space-y-4 relative">
-                             <div className="sticky top-0 z-30 bg-slate-50/90 backdrop-blur-md py-2 md:py-3 border-b border-slate-200/60 flex items-baseline justify-between px-1">
-                               <div>
-                                 <h3 className="font-display font-bold text-slate-900 text-base md:text-lg">Day {dIdx + 1} <span className="text-slate-400 font-normal">| {day.date}</span></h3>
-                                 {day.title && <p className="text-xs md:text-sm text-slate-500 font-medium">{day.title}</p>}
+                             <div className="sticky top-0 z-30 bg-slate-50/90 backdrop-blur-md py-1.5 md:py-2 border-b border-slate-200 flex flex-col px-2 gap-1.5">
+                               <div className="flex items-center justify-between">
+                                 <div className="flex items-baseline gap-2 min-w-0">
+                                   <h3 className="font-display font-bold text-slate-900 text-sm md:text-base whitespace-nowrap">Day {dIdx + 1}</h3>
+                                   <span className="text-[10px] md:text-xs text-slate-400 font-medium uppercase tracking-wider whitespace-nowrap">{day.date}</span>
+                                   {day.title && <span className="text-[10px] md:text-xs text-slate-400 font-normal truncate">— {day.title}</span>}
+                                 </div>
+                                 
+                                 <div className="flex -space-x-1.5 ml-2">
+                                   {Array.from(new Set(day.events?.flatMap(e => expandMembers(e.memberIds, masterTravellers)) || [])).map(mid => {
+                                     const member = masterTravellers.find(m => m.id === mid);
+                                     if (!member) return null;
+                                     return (
+                                       <div 
+                                         key={mid}
+                                         className="w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[8px] font-black text-white shadow-sm"
+                                         style={{ backgroundColor: member.color }}
+                                         title={member.name}
+                                       >
+                                         {member.initials}
+                                       </div>
+                                     );
+                                   })}
+                                 </div>
                                </div>
+                               
+                               {day.events?.some(e => !e.startTime) && (
+                                 <div className="flex flex-wrap gap-1 pb-0.5">
+                                   {day.events.filter(e => !e.startTime).map((event, idx) => (
+                                     <div key={event.id || idx} className="bg-white/80 border border-slate-200 rounded-md px-2 py-0.5 flex items-center gap-1.5 max-w-full">
+                                       <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                                       <span className="text-[10px] font-bold text-slate-700 truncate">{event.title}</span>
+                                     </div>
+                                   ))}
+                                 </div>
+                               )}
                              </div>
-                             {day.events?.length === 0 ? (
+                             {day.events?.filter(e => e.startTime).length === 0 && day.events?.filter(e => !e.startTime).length === 0 ? (
                                <div className="text-center py-8 bg-white rounded-2xl border border-dashed border-slate-200 shadow-sm">
                                  <p className="text-slate-400 text-sm">No events</p>
                                </div>
                              ) : (
                                <div className="space-y-3 relative pl-4 border-l-2 border-slate-100">
-                                 {day.events?.map((event, idx) => (
+                                 {day.events?.filter(e => e.startTime).map((event, idx) => (
                                    <div key={event.id || idx} className="relative mt-3">
                                      <div className="absolute -left-[23px] top-1.5 w-3 h-3 rounded-full bg-blue-600 border-2 border-white shadow-sm" />
-                                     <EventTile event={event} dayIdx={dIdx} eventIdx={idx} />
+                                     <EventTile event={event} dayIdx={dIdx} eventIdx={day.events.indexOf(event)} />
                                    </div>
                                  ))}
                                </div>
@@ -4013,14 +4044,33 @@ export default function App() {
                               return (
                                 <div key={i} className="w-72 shrink-0 border-r border-slate-200 relative flex flex-col z-10">
                                   {/* Header */}
-                                  <div className="h-[88px] p-4 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-30 overflow-hidden shrink-0">
-                                    <div className="flex justify-between items-center mb-1">
-                                      <h3 className="font-display font-bold text-slate-800 text-lg">Day {i + 1}</h3>
-                                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider bg-white px-2 py-1 rounded-md border border-slate-200">
-                                        {day.date}
-                                      </span>
+                                  <div className="h-[72px] p-3 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-30 overflow-hidden shrink-0 flex flex-col justify-center">
+                                    <div className="flex justify-between items-center mb-0.5">
+                                      <h3 className="font-display font-bold text-slate-800 text-base">Day {i + 1}</h3>
+                                      <div className="flex items-center gap-1.5">
+                                        {/* Traveller Stack for the Day */}
+                                        <div className="flex -space-x-1">
+                                          {Array.from(new Set(day.events?.flatMap(e => expandMembers(e.memberIds, masterTravellers)) || [])).map(mid => {
+                                            const member = masterTravellers.find(m => m.id === mid);
+                                            if (!member) return null;
+                                            return (
+                                              <div 
+                                                key={mid}
+                                                className="w-3.5 h-3.5 rounded-full border border-white flex items-center justify-center text-[6px] font-black text-white shadow-sm"
+                                                style={{ backgroundColor: member.color }}
+                                                title={member.name}
+                                              >
+                                                {member.initials}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                                          {day.date}
+                                        </span>
+                                      </div>
                                     </div>
-                                    <p className="text-xs text-slate-500 truncate font-medium">{day.title}</p>
+                                    <p className="text-[10px] text-slate-500 truncate font-medium">{day.title}</p>
                                   </div>
                                   
                                   {/* Events Area */}
@@ -4229,13 +4279,24 @@ export default function App() {
                     <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
                   </div>
                 ) : (
-                  <button
-                    onClick={() => handleAiAction('full')}
-                    disabled={!aiPrompt.trim()}
-                    className="absolute right-2 bottom-2 p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg transition-colors shadow-sm"
-                  >
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
+                  <div className="absolute right-2 bottom-2 flex gap-1">
+                    <button
+                      onClick={() => handleAiAction('shortlist')}
+                      disabled={!aiPrompt.trim()}
+                      title="Search for places and add to shortlist"
+                      className="p-2 bg-indigo-100 hover:bg-indigo-200 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-600 rounded-lg transition-colors"
+                    >
+                      <MapPin className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => handleAiAction('full')}
+                      disabled={!aiPrompt.trim()}
+                      title="Apply changes to itinerary"
+                      className="p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg transition-colors shadow-sm"
+                    >
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
