@@ -1,5 +1,0 @@
-# Cloudflare Pages Redirects
-# This file proxies API requests to your backend server to avoid CORS issues and 405 errors on static hosts.
-# Replace the URL below with your actual Cloud Run / backend URL if it is different.
-
-/api/*  https://ais-pre-55t7hmzfy6xbjhw6glxmqz-600172538697.asia-southeast1.run.app/api/:splat  200
