@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from "../utils/api";
+
 export const gasService = {
   async getArizonaAverage(): Promise<string | null> {
     const CACHE_KEY = 'eia_gas_price_az';
@@ -16,7 +18,7 @@ export const gasService = {
 
     try {
       // Fetch via backend proxy to bypass CORS/sandboxed iframe fetch blocks and protect the API key
-      const response = await fetch('/api/gas', {
+      const response = await fetch(`${getApiBaseUrl()}/api/gas`, {
         credentials: "include"
       });
       if (!response.ok) {

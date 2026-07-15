@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from "../utils/api";
+
 export type TravelMode = 'drive' | 'walk' | 'bike' | 'transit' | 'flight';
 
 export async function getRealTravelTimeMins(
@@ -15,7 +17,7 @@ export async function getRealTravelTimeMins(
 
   try {
     // Fetch via backend proxy to bypass CORS/sandboxed iframe fetch blocks
-    const response = await fetch(`/api/routing?profile=${profile}&coordinates=${lon1},${lat1};${lon2},${lat2}`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/routing?profile=${profile}&coordinates=${lon1},${lat1};${lon2},${lat2}`, {
       credentials: "include"
     });
     if (!response.ok) return null;

@@ -1,4 +1,5 @@
 import { DayPlan, TripMember } from "../constants";
+import { getApiBaseUrl } from "../utils/api";
 
 export interface GeminiSuggestion {
   id: string;
@@ -44,7 +45,7 @@ export const geminiService = {
     currentRestaurants: any[] = [],
     currentExperiences: any[] = []
   ): Promise<GeminiProposal> {
-    const response = await fetch("/api/gemini/propose", {
+    const response = await fetch(`${getApiBaseUrl()}/api/gemini/propose`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -98,7 +99,7 @@ export const geminiService = {
     event: any,
     refinePrompt: string
   ): Promise<any[]> {
-    const response = await fetch("/api/gemini/refine", {
+    const response = await fetch(`${getApiBaseUrl()}/api/gemini/refine`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
