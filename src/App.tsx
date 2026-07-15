@@ -1503,7 +1503,7 @@ export default function App() {
 
       const allLocations = aiProposal.itinerary.flatMap(d => d.events.map(e => e.location?.name || e.destination?.name));
       // When creating a new trip from the list, don't fall back to the currently-loaded
-      // trip's title (e.g. "Arizona 2026") — use an empty string so the AI title wins.
+      // trip's title (e.g. "AI-tinerary") — use an empty string so the AI title wins.
       const titleFallback = view === 'list' ? '' : tripTitleRef.current;
       const finalTitle = normalizeTripTitle(aiProposal.title, allLocations, titleFallback);
 
@@ -2366,7 +2366,7 @@ export default function App() {
           
           let finalTitle = data.title;
           if (!finalTitle || finalTitle === 'Loading...') {
-            finalTitle = currentTripId === 'main' ? 'Arizona 2026' : 'Untitled Trip';
+            finalTitle = currentTripId === 'main' ? 'AI-tinerary' : 'Untitled Trip';
           }
           setTripTitle(finalTitle);
 
@@ -2397,7 +2397,7 @@ export default function App() {
           console.log("Initializing Main Trip with defaults...");
           setDoc(tripDoc, sanitizeForFirestore({ 
             days: ITINERARY_DATA,
-            title: 'Arizona 2026',
+            title: 'AI-tinerary',
             dates: 'May 14 - May 19',
             templateVersion: TEMPLATE_VERSION,
             initializedAt: new Date().toISOString(),
@@ -2478,7 +2478,7 @@ export default function App() {
     const unsubscribe = onSnapshot(tripsCollection, (snapshot) => {
       const trips = snapshot.docs.map(doc => {
         const data = doc.data();
-        const title = data.title || (doc.id === 'main' ? 'Arizona 2026' : 'New Trip');
+        const title = data.title || (doc.id === 'main' ? 'AI-tinerary' : 'New Trip');
         const dates = data.dates || (doc.id === 'main' ? 'May 14 - May 19' : 'Dates TBD');
         const yearMatch = title.match(/\d{4}/) || dates.match(/\d{4}/);
         const year = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();

@@ -1,6 +1,6 @@
 {
-  "name": "Arizona Adventure 2026",
-  "short_name": "Arizona",
+  "name": "AI-tinerary",
+  "short_name": "AI-tinerary",
   "description": "Premium Travel Itinerary App",
   "start_url": "/",
   "display": "standalone",

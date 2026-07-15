@@ -1,6 +1,6 @@
 {
-  "name": "Arizona Adventure 2026",
-  "description": "A dog-friendly travel itinerary for Phoenix, Grand Canyon, and Sedona.",
+  "name": "AI-tinerary",
+  "description": "An AI-powered travel itinerary planner.",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
