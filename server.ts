@@ -14,13 +14,26 @@ const PORT = 3000;
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow all origins in this environment to support Cloud Run + static hostings
+    // In development and for this project's deployments, allow all origins
+    // This is necessary because the app is hosted on Cloudflare Workers (static) 
+    // and talks to Cloud Run (backend).
     callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400 // 24 hours
 }));
+
+// Request logger for debugging connection issues
+app.use((req, res, next) => {
+  console.log(`[Server] ${new Date().toISOString()} ${req.method} ${req.url}`);
+  if (req.headers.origin) {
+    console.log(`[Server] Origin: ${req.headers.origin}`);
+  }
+  next();
+});
 
 app.use(express.json({ limit: '10mb' }));
 
