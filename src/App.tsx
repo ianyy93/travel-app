@@ -5,7 +5,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { 
   Calendar, 
   Info, 
@@ -1177,6 +1176,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'calendar' | 'places' | 'info'>('calendar');
   const [calendarViewMode, setCalendarViewMode] = useState<'schedule' | 'grid'>('schedule');
   const [hourHeight, setHourHeight] = useState<number>(80);
+  const [dayWidth, setDayWidth] = useState<number>(288);
   const [selectedEventForModal, setSelectedEventForModal] = useState<{ event: TripEvent, dayIdx: number, eventIdx: number } | null>(null);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
   const [activeDayIdx, setActiveDayIdx] = useState(-1);
@@ -2498,6 +2498,61 @@ export default function App() {
 
     return () => unsubscribe();
   }, [user, deletingTripIds]);
+
+
+  // Semantic Pinch-to-Zoom for Grid View
+  useEffect(() => {
+    const el = gridScrollContainerRef.current;
+    if (!el || calendarViewMode !== 'grid') return;
+
+    let initialDist = 0;
+    let initialH = 80;
+    let initialW = 288;
+
+    const handleTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        initialDist = Math.hypot(
+          e.touches[0].pageX - e.touches[1].pageX,
+          e.touches[0].pageY - e.touches[1].pageY
+        );
+        setHourHeight(prev => { initialH = prev; return prev; });
+        setDayWidth(prev => { initialW = prev; return prev; });
+      }
+    };
+
+    const handleTouchMove = (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault(); // Prevents page zoom
+        const currentDist = Math.hypot(
+          e.touches[0].pageX - e.touches[1].pageX,
+          e.touches[0].pageY - e.touches[1].pageY
+        );
+        const scale = currentDist / initialDist;
+        
+        setHourHeight(Math.min(300, Math.max(40, initialH * scale)));
+        setDayWidth(Math.min(600, Math.max(150, initialW * scale)));
+      }
+    };
+
+    const handleWheel = (e) => {
+      if (e.ctrlKey) {
+        e.preventDefault(); // Prevents trackpad page zoom
+        const scaleChange = e.deltaY * -0.01;
+        setHourHeight(prev => Math.min(300, Math.max(40, prev * (1 + scaleChange))));
+        setDayWidth(prev => Math.min(600, Math.max(150, prev * (1 + scaleChange))));
+      }
+    };
+
+    el.addEventListener('touchstart', handleTouchStart, { passive: false });
+    el.addEventListener('touchmove', handleTouchMove, { passive: false });
+    el.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchmove', handleTouchMove);
+      el.removeEventListener('wheel', handleWheel);
+    };
+  }, [calendarViewMode]);
 
   // Scroll to earliest event time in Grid (All Days) view
   useEffect(() => {
@@ -3828,7 +3883,7 @@ export default function App() {
                       {calendarViewMode === 'grid' && (
                         <div className="flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl">
                           <button 
-                            onClick={() => setHourHeight(prev => Math.max(40, prev - 20))}
+                            onClick={() => { setHourHeight(prev => Math.max(40, prev - 20)); setDayWidth(prev => Math.max(150, prev - 72)); }}
                             disabled={hourHeight <= 40}
                             className="p-1.5 rounded-lg hover:bg-white text-slate-600 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
                             title="Zoom Out"
@@ -3839,7 +3894,7 @@ export default function App() {
                             Zoom
                           </span>
                           <button 
-                            onClick={() => setHourHeight(prev => Math.min(200, prev + 20))}
+                            onClick={() => { setHourHeight(prev => Math.min(300, prev + 20)); setDayWidth(prev => Math.min(600, prev + 72)); }}
                             disabled={hourHeight >= 200}
                             className="p-1.5 rounded-lg hover:bg-white text-slate-600 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
                             title="Zoom In"
@@ -3924,17 +3979,8 @@ export default function App() {
                          )}
                       </div>
                     ) : (
-                      <div ref={gridScrollContainerRef} className="flex-1 overflow-hidden bg-slate-50 relative pb-20 scrollbar-hide cursor-grab active:cursor-grabbing">
-                        <TransformWrapper
-                          initialScale={1}
-                          minScale={0.2}
-                          maxScale={3}
-                          limitToBounds={false}
-                          panning={{ velocityDisabled: false }}
-                          pinch={{ step: 5 }}
-                        >
-                          <TransformComponent wrapperClass="!w-full !h-full" contentClass="min-w-max min-h-max">
-                            <div className="flex min-w-max min-h-max relative">
+                      <div ref={gridScrollContainerRef} className="flex-1 overflow-auto bg-slate-50 relative pb-20 scrollbar-hide touch-pan-x touch-pan-y">
+                        <div className="flex min-w-max min-h-max relative">
                           {/* Time Axis */}
                           <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-40">
                             <div className="h-[88px] border-b border-slate-200 bg-white sticky top-0 z-50" />
@@ -4052,7 +4098,7 @@ export default function App() {
                               };
 
                               return (
-                                <div key={i} className="w-72 shrink-0 border-r border-slate-200 relative flex flex-col z-10">
+                                <div key={i} className="shrink-0 border-r border-slate-200 relative flex flex-col z-10" style={{ width: dayWidth }}>
                                   {/* Header */}
                                   <div className="h-[72px] p-3 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-30 overflow-hidden shrink-0 flex flex-col justify-center">
                                     <div className="flex justify-between items-center mb-0.5">
@@ -4107,8 +4153,6 @@ export default function App() {
                             })}
                           </div>
                         </div>
-                          </TransformComponent>
-                        </TransformWrapper>
                       </div>
                     )}
                   </motion.div>
