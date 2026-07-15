@@ -5,6 +5,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { 
   Calendar, 
   Info, 
@@ -3923,8 +3924,17 @@ export default function App() {
                          )}
                       </div>
                     ) : (
-                      <div ref={gridScrollContainerRef} className="flex-1 overflow-auto bg-slate-50 relative pb-20 scrollbar-hide">
-                        <div className="flex min-w-max min-h-max relative">
+                      <div ref={gridScrollContainerRef} className="flex-1 overflow-hidden bg-slate-50 relative pb-20 scrollbar-hide cursor-grab active:cursor-grabbing">
+                        <TransformWrapper
+                          initialScale={1}
+                          minScale={0.2}
+                          maxScale={3}
+                          limitToBounds={false}
+                          panning={{ velocityDisabled: false }}
+                          pinch={{ step: 5 }}
+                        >
+                          <TransformComponent wrapperClass="!w-full !h-full" contentClass="min-w-max min-h-max">
+                            <div className="flex min-w-max min-h-max relative">
                           {/* Time Axis */}
                           <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-40">
                             <div className="h-[88px] border-b border-slate-200 bg-white sticky top-0 z-50" />
@@ -4097,6 +4107,8 @@ export default function App() {
                             })}
                           </div>
                         </div>
+                          </TransformComponent>
+                        </TransformWrapper>
                       </div>
                     )}
                   </motion.div>
