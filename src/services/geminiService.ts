@@ -68,6 +68,17 @@ export const geminiService = {
     });
 
     if (!response.ok) {
+      if (response.status === 405 && typeof window !== 'undefined') {
+        const newUrl = window.prompt(
+          "API Error 405: This usually means you are on a static host like Cloudflare and the backend URL is not configured.\n\nPlease enter your backend (Cloud Run) URL (e.g. https://your-app.run.app):",
+          getApiBaseUrl()
+        );
+        if (newUrl) {
+          localStorage.setItem('BACKEND_URL', newUrl);
+          window.location.reload();
+        }
+      }
+
       let errorMessage = `Failed to propose changes: ${response.status} ${response.statusText}`;
       try {
         const errorData = await response.json();
