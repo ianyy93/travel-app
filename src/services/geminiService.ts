@@ -105,9 +105,12 @@ export const geminiService = {
         throw new Error("Server returned non-JSON response: " + text.substring(0, 100));
       }
     } catch (error: any) {
+      const targetUrl = `${getApiBaseUrl()}/api/gemini/propose`;
+      console.error(`[GeminiService] Connection error to ${targetUrl}:`, error);
+      
       if (typeof window !== 'undefined' && (error.message === 'Failed to fetch' || error.message?.includes('NetworkError'))) {
         const newUrl = window.prompt(
-          "Connection Error: Failed to reach the backend server.\n\nThis usually happens if the backend URL is not configured correctly on a static host or blocked by CORS.\n\nPlease enter your backend (Cloud Run) URL (e.g. https://your-app.run.app):",
+          `Connection Error: Failed to reach the backend server at ${getApiBaseUrl() || 'local server'}.\n\nThis usually happens if the backend URL is not configured correctly on a static host or blocked by CORS.\n\nPlease enter your backend (Cloud Run) URL (e.g. https://your-app.run.app):`,
           getApiBaseUrl()
         );
         if (newUrl) {
@@ -150,9 +153,12 @@ export const geminiService = {
         throw new Error("Server returned non-JSON response for refine: " + text.substring(0, 100));
       }
     } catch (error: any) {
+      const targetUrl = `${getApiBaseUrl()}/api/gemini/refine`;
+      console.error(`[GeminiService] Connection error to ${targetUrl}:`, error);
+      
       if (typeof window !== 'undefined' && (error.message === 'Failed to fetch' || error.message?.includes('NetworkError'))) {
         const newUrl = window.prompt(
-          "Connection Error: Failed to reach the backend server.\n\nThis usually happens if the backend URL is not configured correctly on a static host or blocked by CORS.\n\nPlease enter your backend (Cloud Run) URL (e.g. https://your-app.run.app):",
+          `Connection Error: Failed to reach the backend server at ${getApiBaseUrl() || 'local server'}.\n\nThis usually happens if the backend URL is not configured correctly on a static host or blocked by CORS.\n\nPlease enter your backend (Cloud Run) URL (e.g. https://your-app.run.app):`,
           getApiBaseUrl()
         );
         if (newUrl) {
