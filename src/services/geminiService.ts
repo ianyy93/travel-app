@@ -44,12 +44,12 @@ export const geminiService = {
     currentRestaurants: any[] = [],
     currentExperiences: any[] = []
   ): Promise<GeminiProposal> {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const response = await fetch(`${origin}/api/gemini/propose`, {
+    const response = await fetch("/api/gemini/propose", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
+      credentials: "include",
       body: JSON.stringify({
         model,
         currentItinerary,
@@ -98,12 +98,12 @@ export const geminiService = {
     event: any,
     refinePrompt: string
   ): Promise<any[]> {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const response = await fetch(`${origin}/api/gemini/refine`, {
+    const response = await fetch("/api/gemini/refine", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
+      credentials: "include",
       body: JSON.stringify({
         event,
         refinePrompt,

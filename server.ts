@@ -549,8 +549,8 @@ app.post("/api/gemini/propose", async (req, res) => {
 
     const {
       model,
-      currentItinerary,
-      userPrompt,
+      currentItinerary = [],
+      userPrompt = '',
       mode = 'full',
       pastTripsSummary,
       currentMembers = [],
@@ -560,7 +560,7 @@ app.post("/api/gemini/propose", async (req, res) => {
       currentRentalInfo = null,
       currentRestaurants = [],
       currentExperiences = []
-    } = req.body;
+    } = req.body || {};
 
     const isNewTripRequest = currentItinerary.length === 0 || 
       userPrompt.toLowerCase().includes('new trip') || 
