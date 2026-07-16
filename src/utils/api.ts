@@ -28,23 +28,27 @@ export function getApiBaseUrl(): string {
     }
   }
 
-  // 3. Fallback for common static hosting domains if we aren't already on the backend
-  const staticDomains = [
-    'workers.dev', 'pages.dev', 'github.io', 'netlify.app', 
-    'vercel.app', 'web.app', 'firebaseapp.com', 'amplifyapp.com',
-    'azurestaticapps.net', 'onrender.com', 'surge.sh'
-  ];
+  // 3. Fallback: If we are not on the backend itself, we need to point to the backend.
+  const backendUrl = normalizeUrl('https://ais-pre-55t7hmzfy6xbjhw6glxmqz-600172538697.asia-southeast1.run.app');
   
   const hostname = window.location.hostname;
-  const isStaticHost = staticDomains.some(domain => hostname.endsWith(domain));
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.');
 
-  if (isStaticHost || isLocalhost) {
-    const backendUrl = normalizeUrl('https://ais-pre-55t7hmzfy6xbjhw6glxmqz-600172538697.asia-southeast1.run.app');
-    if (currentOrigin !== backendUrl) {
-      console.log(`[API] Static/Local host detected (${hostname}). Using backend: ${backendUrl}`);
-      return backendUrl;
+  if (currentOrigin !== backendUrl) {
+    if (isLocalhost) {
+      // For local development:
+      // If we are on port 3000 (backend port), use relative paths to route to the local server
+      if (window.location.port === '3000') {
+        return '';
+      }
+      // If on another local port (e.g., Vite dev server on 5173), point to local backend on 3000
+      return 'http://localhost:3000';
     }
+
+    // In production, if the current origin is not the backend itself (e.g., custom domains, static hosting subdomains, or iframe previews),
+    // we must direct requests to the deployed Cloud Run backend.
+    console.log(`[API] Deployed static/custom host detected (${hostname}). Using backend: ${backendUrl}`);
+    return backendUrl;
   }
 
   return '';
