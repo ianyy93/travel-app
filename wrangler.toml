@@ -1,15 +1,10 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "travel-app"
 compatibility_date = "2026-07-15"
-compatibility_flags = [ "nodejs_compat" ]
 
-# Points to your compiled back-end node server file
-main = "dist/server.cjs"
-
-# Points to your compiled front-end static assets directory
+# Points Cloudflare strictly to your compiled front-end user interface
 [assets]
 directory = "./dist"
-binding = "ASSETS"
 
 [build]
 command = "npm run build"
