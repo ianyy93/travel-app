@@ -1,0 +1,9 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "travel-app"
+compatibility_date = "2026-07-15"
+
+[build]
+# Forces Cloudflare to skip automatic bun installation loops entirely
+skip_install = true 
+# Manually runs npm setup safely before executing the compilation command
+command = "npm install && npm run build" 
