@@ -2,8 +2,13 @@
 name = "travel-app"
 compatibility_date = "2026-07-15"
 
+# Points to your compiled back-end node server file
+main = "dist/server.cjs"
+
+# Points to your compiled front-end static assets directory
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
 [build]
-# Forces Cloudflare to skip automatic bun installation loops entirely
-skip_install = true 
-# Manually runs npm setup safely before executing the compilation command
-command = "npm install && npm run build" 
+command = "npm run build"
