@@ -12,14 +12,14 @@ export function getApiBaseUrl(): string {
 
   const currentOrigin = normalizeUrl(window.location.origin);
 
-  // 1. Check localStorage for an override (useful for debugging/custom deployments)
+  // 1. Check localStorage for an override (set via the browser prompt on connection error)
   const saved = localStorage.getItem('BACKEND_URL');
   if (saved) {
     const normalizedSaved = normalizeUrl(saved);
     if (normalizedSaved && normalizedSaved !== currentOrigin) return normalizedSaved;
   }
 
-  // 2. Check for baked-in URL from build process
+  // 2. Check for baked-in URL from build process (set via VITE_APP_URL env var)
   const bakedUrl = import.meta.env.VITE_APP_URL || (typeof process !== 'undefined' && process.env ? (process.env as any).APP_URL : '');
   if (bakedUrl) {
     const normalizedBaked = normalizeUrl(bakedUrl);
@@ -28,28 +28,16 @@ export function getApiBaseUrl(): string {
     }
   }
 
-  // 3. Fallback: If we are not on the backend itself, we need to point to the backend.
-  const backendUrl = normalizeUrl('https://ais-pre-55t7hmzfy6xbjhw6glxmqz-600172538697.asia-southeast1.run.app');
-  
+  // 3. Local dev: if running on a port other than 3000 (e.g. Vite dev server on 5173),
+  // point to the local Express backend on port 3000.
   const hostname = window.location.hostname;
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.');
-
-  if (currentOrigin !== backendUrl) {
-    if (isLocalhost) {
-      // For local development:
-      // If we are on port 3000 (backend port), use relative paths to route to the local server
-      if (window.location.port === '3000') {
-        return '';
-      }
-      // If on another local port (e.g., Vite dev server on 5173), point to local backend on 3000
-      return 'http://localhost:3000';
-    }
-
-    // In production, if the current origin is not the backend itself (e.g., custom domains, static hosting subdomains, or iframe previews),
-    // we must direct requests to the deployed Cloud Run backend.
-    console.log(`[API] Deployed static/custom host detected (${hostname}). Using backend: ${backendUrl}`);
-    return backendUrl;
+  if (isLocalhost && window.location.port !== '3000') {
+    return 'http://localhost:3000';
   }
 
+  // 4. Default: use relative paths (empty string = same origin).
+  // This is correct for full-stack deployments (Render, Cloud Run, Railway, etc.)
+  // where the Express server hosts both the frontend and the API on the same URL.
   return '';
 }
