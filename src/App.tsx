@@ -3144,10 +3144,39 @@ export default function App() {
           {/* Location / Travel Details */}
           {isGridMode ? (
             event.type === 'travel' ? (
-              <div className="mt-0.5 flex items-center gap-1 text-[8.5px] font-medium text-slate-500 uppercase tracking-tight truncate">
-                <span>{typeof event.origin === 'string' ? event.origin : event.origin?.name}</span>
-                <ArrowRight className="w-2.5 h-2.5 text-slate-400 shrink-0" />
-                <span>{typeof event.destination === 'string' ? event.destination : event.destination?.name}</span>
+              <div className="mt-0.5 space-y-1">
+                <div className="flex items-center gap-1 text-[8.5px] font-medium text-slate-500 uppercase tracking-tight truncate">
+                  <span>{typeof event.origin === 'string' ? event.origin : event.origin?.name}</span>
+                  <ArrowRight className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                  <span>{typeof event.destination === 'string' ? event.destination : event.destination?.name}</span>
+                </div>
+                <div className="flex gap-1 flex-wrap">
+                  {[
+                    { mode: 'walk', icon: <Footprints className="w-2.5 h-2.5" /> },
+                    { mode: 'bike', icon: <Bike className="w-2.5 h-2.5" /> },
+                    { mode: 'drive', icon: <Car className="w-2.5 h-2.5" /> },
+                    { mode: 'rideshare', icon: <Car className="w-2.5 h-2.5" /> },
+                    { mode: 'transit', icon: <Bus className="w-2.5 h-2.5" /> },
+                    { mode: 'flight', icon: <Plane className="w-2.5 h-2.5" /> }
+                  ].map(({ mode, icon }) => (
+                    <button
+                      key={mode}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleUpdateTravelMode(dayIdx, event.id, mode as any);
+                      }}
+                      className={cn(
+                        "p-1 rounded-md transition-all",
+                        event.category === mode 
+                          ? "bg-white text-blue-600 shadow-sm ring-1 ring-slate-100" 
+                          : "text-slate-400 hover:text-slate-600"
+                      )}
+                      title={`Switch to ${mode}`}
+                    >
+                      {icon}
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : (
               event.location && (
