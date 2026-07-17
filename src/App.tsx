@@ -2388,7 +2388,8 @@ export default function App() {
 
         // Trigger local updates if user is not currently editing the title
         if (!isEditingTitle) {
-          setItinerary(data.days);
+          const normalizedDays = syncNavigationEvents(Array.isArray(data.days) ? data.days : []);
+          setItinerary(normalizedDays);
           
           let finalTitle = data.title;
           if (!finalTitle || finalTitle === 'Loading...') {
