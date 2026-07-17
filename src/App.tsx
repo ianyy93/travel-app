@@ -2033,8 +2033,10 @@ export default function App() {
     const lastEventPerMember: Record<string, (TripEvent & { isCrossDay?: boolean }) | null> = {};
 
     const isRoutableEvent = (e: TripEvent) =>
-      !e.hidden && !!e.location?.lat && !!e.location?.lng &&
-      e.status === 'confirmed';
+      !e.hidden &&
+      !!e.location?.lat &&
+      !!e.location?.lng &&
+      (e.status === undefined || e.status === 'confirmed' || e.status === 'pending-meal');
 
     if (dayIdx > 0) {
       let prevDayIdx = dayIdx - 1;
@@ -2388,7 +2390,9 @@ export default function App() {
 
         // Trigger local updates if user is not currently editing the title
         if (!isEditingTitle) {
-          const normalizedDays = syncNavigationEvents(Array.isArray(data.days) ? data.days : []);
+          const loadedDays = Array.isArray(data.days) ? data.days : [];
+          const normalizedDays = syncNavigationEvents(loadedDays);
+          const needsSave = JSON.stringify(normalizedDays) !== JSON.stringify(loadedDays);
           setItinerary(normalizedDays);
           
           let finalTitle = data.title;
@@ -2403,6 +2407,10 @@ export default function App() {
             finalDates = currentTripId === 'main' ? 'May 14 - May 19' : 'Dates TBD';
           }
           setTripDates(finalDates);
+
+          if (needsSave && auth.currentUser && isAdmin) {
+            saveToFirestore(normalizedDays, finalTitle, finalDates, true);
+          }
         }
 
         setShortlist(data.shortlist || []);
