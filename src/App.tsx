@@ -291,6 +291,7 @@ const EventIcon = ({ category, className }: { category: TripCategory; className?
   switch (category) {
     case 'flight': return <Plane className={cnStr} />;
     case 'drive': return <Car className={cnStr} />;
+    case 'rideshare': return <Car className={cnStr} />;
     case 'stay': return <Moon className={cnStr} />;
     case 'food': return <Utensils className={cnStr} />;
     case 'walk': return <MapPin className={cnStr} />;
@@ -1896,13 +1897,36 @@ export default function App() {
       case 'walk': return Math.round((distKm / 5) * 60);
       case 'bike': return Math.round((distKm / 15) * 60) + 2; // ~15km/h + buffer
       case 'drive': return Math.round((distKm / 40) * 60) + 5; // Add 5 mins buffer
+      case 'rideshare': return Math.round((distKm / 35) * 60) + 6; // Slightly more than drive due to pickup/dropoff
       case 'transit': return Math.round((distKm / 20) * 60) + 10; // Add 10 mins buffer
       case 'flight': return Math.round((distKm / 800) * 60) + 120; // 2h overhead
       default: return Math.round((distKm / 40) * 60);
     }
   };
 
-  const handleUpdateTravelMode = async (dayIdx: number, eventId: string, newMode: 'transit' | 'drive' | 'walk' | 'flight' | 'bike') => {
+  const getTravelModeLabel = (mode: string) => {
+    switch (mode) {
+      case 'walk': return 'Walk';
+      case 'bike': return 'Bike';
+      case 'drive': return 'Drive';
+      case 'rideshare': return 'Rideshare';
+      case 'transit': return 'Transit';
+      case 'flight': return 'Flight';
+      default: return 'Drive';
+    }
+  };
+
+  const inferTravelMode = (prevLoc?: Location, currLoc?: Location, fallbackMode?: TripCategory): TripCategory => {
+    if (!prevLoc || !currLoc) return fallbackMode || 'drive';
+    const distKm = getDistanceKm(prevLoc.lat, prevLoc.lng, currLoc.lat, currLoc.lng);
+    if (distKm > 500) return 'flight';
+    if (distKm < 1.0) return 'walk';
+    if (fallbackMode === 'drive' || hasRentalInfo) return 'drive';
+    if (distKm < 10) return 'rideshare';
+    return 'transit';
+  };
+
+  const handleUpdateTravelMode = async (dayIdx: number, eventId: string, newMode: 'transit' | 'drive' | 'walk' | 'flight' | 'bike' | 'rideshare') => {
     let newItin = [...itinerary];
     const day = { ...newItin[dayIdx] };
     newItin[dayIdx] = day;
@@ -1915,6 +1939,7 @@ export default function App() {
     const modeLabels: Record<string, string> = {
       transit: 'Transit',
       drive: 'Drive',
+      rideshare: 'Rideshare',
       walk: 'Walk',
       bike: 'Bike',
       flight: 'Flight'
@@ -2072,9 +2097,13 @@ export default function App() {
             }
             const endTime = current.startTime;
             
-            if (gap >= 5) {
+            if (gap >= 0) {
               // Try to find if user customized an existing travel segment for these exact two events
-              const existingNav = existingTravelEvents.find(t => t.id.startsWith(`nav-${prev.id}-${current.id}`));
+              const existingNav = existingTravelEvents.find(t => {
+                const idMatch = t.id.startsWith(`nav-${prev.id}-${current.id}`);
+                const sharedPair = (t.origin?.name && prevLoc.name && t.origin.name === prevLoc.name && t.destination?.name && currLoc.name && t.destination.name === currLoc.name);
+                return idMatch || sharedPair;
+              });
 
               // Re-use or Create
               let navEvent: TripEvent;
@@ -2086,23 +2115,12 @@ export default function App() {
                 }
                 navEvent = { ...existingNav, title: reusedTitle, origin: prevLoc, destination: currLoc, startTime, endTime };
               } else {
-                const distKm = getDistanceKm(prevLoc.lat, prevLoc.lng, currLoc.lat, currLoc.lng);
-                let autoMode: TripCategory = baseMode;
-                let autoTitle = baseTitle;
-                
-                if (distKm > 500) {
-                  autoMode = 'flight';
-                  autoTitle = 'Flight';
-                } else if (distKm < 1.0) {
-                  autoMode = 'walk';
-                  autoTitle = 'Walk';
-                }
-
+                const inferredMode = inferTravelMode(prevLoc, currLoc, baseMode);
                 navEvent = {
                   id: `nav-${prev.id}-${current.id}-${Date.now()}`,
                   type: 'travel',
-                  category: autoMode,
-                  title: `${autoTitle} to ${currLoc.name}`,
+                  category: inferredMode,
+                  title: `${getTravelModeLabel(inferredMode)} to ${currLoc.name}`,
                   origin: prevLoc,
                   destination: currLoc,
                   startTime,
@@ -2236,11 +2254,12 @@ export default function App() {
                     existingNav.memberIds.push(mid);
                   }
                 } else {
+                  const inferredMode = inferTravelMode(prevLoc, currLoc, defaultMode as TripCategory);
                   travelEvents.push({
                     id: `nav-${prev.id}-${current.id}-${mid}-${Date.now()}`,
                     type: 'travel',
-                    category: defaultMode,
-                    title: `${defaultTitle} to ${currLoc.name}`,
+                    category: inferredMode,
+                    title: `${getTravelModeLabel(inferredMode)} to ${currLoc.name}`,
                     origin: prevLoc,
                     destination: currLoc,
                     startTime,
@@ -3177,11 +3196,12 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="flex gap-1 bg-slate-100/50 p-1 rounded-xl w-fit">
+                <div className="flex gap-1 bg-slate-100/50 p-1 rounded-xl w-fit flex-wrap">
                   {[
                     { mode: 'walk', icon: <Footprints className="w-3 h-3" /> },
                     { mode: 'bike', icon: <Bike className="w-3 h-3" /> },
                     { mode: 'drive', icon: <Car className="w-3 h-3" /> },
+                    { mode: 'rideshare', icon: <Car className="w-3 h-3" /> },
                     { mode: 'transit', icon: <Bus className="w-3 h-3" /> },
                     { mode: 'flight', icon: <Plane className="w-3 h-3" /> }
                   ].map(({ mode, icon }) => (

@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from "../utils/api";
 
-export type TravelMode = 'drive' | 'walk' | 'bike' | 'transit' | 'flight';
+export type TravelMode = 'drive' | 'walk' | 'bike' | 'transit' | 'flight' | 'rideshare';
 
 export async function getRealTravelTimeMins(
   lat1: number, lon1: number, 

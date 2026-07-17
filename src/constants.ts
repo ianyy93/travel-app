@@ -6,7 +6,7 @@ export interface Location {
 }
 
 export type TripEventType = 'activity' | 'travel';
-export type TripCategory = 'flight' | 'drive' | 'stay' | 'activity' | 'food' | 'walk' | 'transit' | 'logistics' | 'work';
+export type TripCategory = 'flight' | 'drive' | 'stay' | 'activity' | 'food' | 'walk' | 'transit' | 'rideshare' | 'logistics' | 'work';
 
 export interface TripMember {
   id: string;
