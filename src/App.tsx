@@ -1176,6 +1176,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'calendar' | 'places' | 'info'>('calendar');
   const [calendarViewMode, setCalendarViewMode] = useState<'schedule' | 'grid'>('schedule');
   const [hourHeight, setHourHeight] = useState<number>(80);
+  const calendarGridHeaderHeight = 72;
   const [selectedEventForModal, setSelectedEventForModal] = useState<{ event: TripEvent, dayIdx: number, eventIdx: number } | null>(null);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
   const [activeDayIdx, setActiveDayIdx] = useState(-1);
@@ -3927,7 +3928,7 @@ export default function App() {
                         <div className="flex min-w-max min-h-max relative">
                           {/* Time Axis */}
                           <div className="w-16 shrink-0 border-r border-slate-200 bg-white sticky left-0 z-40">
-                            <div className="h-[88px] border-b border-slate-200 bg-white sticky top-0 z-50" />
+                            <div className="border-b border-slate-200 bg-white sticky top-0 z-50" style={{ height: calendarGridHeaderHeight }} />
                             <div className="relative" style={{ height: 24 * hourHeight }}>
                               {Array.from({ length: 24 }).map((_, h) => (
                                 <div key={h} className="absolute w-full text-right pr-2 text-[10px] font-bold text-slate-400" style={{ top: h * hourHeight - 8 }}>
@@ -3938,8 +3939,8 @@ export default function App() {
                           </div>
                           
                           {/* Background Grid Lines */}
-                          <div className="absolute inset-0 pointer-events-none z-0 ml-16" style={{ height: 24 * hourHeight + 88 }}>
-                            <div className="h-[88px]" />
+                          <div className="absolute inset-0 pointer-events-none z-0 ml-16" style={{ height: 24 * hourHeight + calendarGridHeaderHeight }}>
+                            <div style={{ height: calendarGridHeaderHeight }} />
                             {Array.from({ length: 24 }).map((_, h) => (
                               <div key={h} className="border-b border-slate-200 w-full" style={{ height: hourHeight }} />
                             ))}
@@ -4044,7 +4045,7 @@ export default function App() {
                               return (
                                 <div key={i} className="w-72 shrink-0 border-r border-slate-200 relative flex flex-col z-10">
                                   {/* Header */}
-                                  <div className="h-[72px] p-3 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-30 overflow-hidden shrink-0 flex flex-col justify-center">
+                                  <div className="p-3 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-30 overflow-hidden shrink-0 flex flex-col justify-center" style={{ height: calendarGridHeaderHeight }}>
                                     <div className="flex justify-between items-center mb-0.5">
                                       <h3 className="font-display font-bold text-slate-800 text-base">Day {i + 1}</h3>
                                       <div className="flex items-center gap-1.5">
