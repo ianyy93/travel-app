@@ -4582,6 +4582,34 @@ export default function App() {
                       <span className="truncate max-w-[40%] text-slate-700">{selectedEventForModal.event.destination.name}</span>
                     </div>
 
+                    <div className="flex gap-1.5 bg-white/80 p-1.5 rounded-2xl w-fit flex-wrap border border-slate-200">
+                      {[
+                        { mode: 'walk', icon: <Footprints className="w-3.5 h-3.5" /> },
+                        { mode: 'bike', icon: <Bike className="w-3.5 h-3.5" /> },
+                        { mode: 'drive', icon: <Car className="w-3.5 h-3.5" /> },
+                        { mode: 'rideshare', icon: <Car className="w-3.5 h-3.5" /> },
+                        { mode: 'transit', icon: <Bus className="w-3.5 h-3.5" /> },
+                        { mode: 'flight', icon: <Plane className="w-3.5 h-3.5" /> }
+                      ].map(({ mode, icon }) => (
+                        <button
+                          key={mode}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleUpdateTravelMode(selectedEventForModal.dayIdx, selectedEventForModal.event.id, mode as any);
+                          }}
+                          className={cn(
+                            "p-2 rounded-xl transition-all",
+                            selectedEventForModal.event.category === mode
+                              ? "bg-blue-600 text-white shadow-sm"
+                              : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                          )}
+                          title={`Switch to ${mode}`}
+                        >
+                          {icon}
+                        </button>
+                      ))}
+                    </div>
+
                     <div className="flex gap-2">
                       <a 
                         href={(() => {
