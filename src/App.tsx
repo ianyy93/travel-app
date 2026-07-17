@@ -80,6 +80,7 @@ import { getAppleMapsUrl, getGoogleMapsUrl, getDayRouteUrl } from './utils/mapUt
 import { sanitizeForFirestore } from './utils/sanitizeForFirestore';
 import { expandMembers } from './utils/memberUtils';
 import { cn, parseItineraryDate, parseTime, toMinutes } from './lib/utils';
+import { buildNavigationEventsForDay, buildTravelModeChange, getTravelModeLabel, inferTravelMode } from './lib/itineraryUtils';
 import { db, auth } from './firebase';
 import { doc, onSnapshot, setDoc, getDoc, collection, deleteDoc, query, orderBy, limit, getDocs, writeBatch, updateDoc } from 'firebase/firestore';
 import { 
@@ -1878,52 +1879,6 @@ export default function App() {
     return false;
   };
 
-  const getDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-    return R * c;
-  };
-
-  const estimateTravelMinutes = (distKm: number, mode: string) => {
-    switch (mode) {
-      case 'walk': return Math.round((distKm / 5) * 60);
-      case 'bike': return Math.round((distKm / 15) * 60) + 2; // ~15km/h + buffer
-      case 'drive': return Math.round((distKm / 40) * 60) + 5; // Add 5 mins buffer
-      case 'rideshare': return Math.round((distKm / 35) * 60) + 6; // Slightly more than drive due to pickup/dropoff
-      case 'transit': return Math.round((distKm / 20) * 60) + 10; // Add 10 mins buffer
-      case 'flight': return Math.round((distKm / 800) * 60) + 120; // 2h overhead
-      default: return Math.round((distKm / 40) * 60);
-    }
-  };
-
-  const getTravelModeLabel = (mode: string) => {
-    switch (mode) {
-      case 'walk': return 'Walk';
-      case 'bike': return 'Bike';
-      case 'drive': return 'Drive';
-      case 'rideshare': return 'Rideshare';
-      case 'transit': return 'Transit';
-      case 'flight': return 'Flight';
-      default: return 'Drive';
-    }
-  };
-
-  const inferTravelMode = (prevLoc?: Location, currLoc?: Location, fallbackMode?: TripCategory): TripCategory => {
-    if (!prevLoc || !currLoc) return fallbackMode || 'drive';
-    const distKm = getDistanceKm(prevLoc.lat, prevLoc.lng, currLoc.lat, currLoc.lng);
-    if (distKm > 500) return 'flight';
-    if (distKm < 1.0) return 'walk';
-    if (fallbackMode === 'drive' || hasRentalInfo) return 'drive';
-    if (distKm < 10) return 'rideshare';
-    return 'transit';
-  };
-
   const handleUpdateTravelMode = async (dayIdx: number, eventId: string, newMode: 'transit' | 'drive' | 'walk' | 'flight' | 'bike' | 'rideshare') => {
     let newItin = [...itinerary];
     const day = { ...newItin[dayIdx] };
@@ -1934,49 +1889,11 @@ export default function App() {
     const event = day.events[evIdx];
     if (event.category === newMode) return;
 
-    const modeLabels: Record<string, string> = {
-      transit: 'Transit',
-      drive: 'Drive',
-      rideshare: 'Rideshare',
-      walk: 'Walk',
-      bike: 'Bike',
-      flight: 'Flight'
-    };
-
-    const dist = event.origin && event.destination ? getDistanceKm(event.origin.lat, event.origin.lng, event.destination.lat, event.destination.lng) : 0;
-    let estimatedMins = estimateTravelMinutes(dist, newMode);
-
-    // Try to get real-time OSRM routing
-    if (event.origin && event.destination) {
-      const realMins = await getRealTravelTimeMins(
-        event.origin.lat, event.origin.lng,
-        event.destination.lat, event.destination.lng,
-        newMode
-      );
-      if (realMins !== null) {
-        estimatedMins = realMins + (newMode === 'drive' ? 5 : 0); // 5 min buffer for driving (parking etc)
-      }
-    }
-
     const oldStartMins = toMinutes(event.startTime);
     const oldEndMins = toMinutes(event.endTime);
     const oldDurationMins = Math.max(0, oldEndMins - oldStartMins);
+    const { updatedEvent, estimatedMins } = await buildTravelModeChange(event, newMode, hasRentalInfo);
     const diffMins = estimatedMins - oldDurationMins;
-
-    // Update the travel event itself
-    const updatedEvent = {
-      ...event,
-      category: newMode,
-      title: `${modeLabels[newMode]} to ${event.destination?.name || 'Destination'}`
-    };
-
-    if (updatedEvent.startTime) {
-      const startMins = toMinutes(updatedEvent.startTime);
-      const endMins = startMins + estimatedMins;
-      const hrs = Math.floor(endMins / 60) % 24;
-      const mins = endMins % 60;
-      updatedEvent.endTime = `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-    }
 
     day.events[evIdx] = updatedEvent;
 
@@ -2016,148 +1933,10 @@ export default function App() {
     const hasRental = (explicitRentalInfo !== undefined && explicitRentalInfo !== null) ? 
        !!(explicitRentalInfo.company || explicitRentalInfo.car || explicitRentalInfo.confirmation) :
        hasRentalInfo;
-    const baseMode: TripCategory = hasRental ? 'drive' : 'transit';
-    const baseTitle = hasRental ? 'Drive' : 'Transit';
-
     const newItin = [...inputItin];
     const day = { ...newItin[dayIdx] };
-    
-    // We just recalculate all routes for the specific day to ensure absolute consistency
-    // across all members, handling edge cases of multiple events hiding/showing.
-    const nonTravelEvents = day.events.filter(e => e.type !== 'travel');
-    const existingTravelEvents = day.events.filter(e => e.type === 'travel');
-    
-    // Wipe and recreate travel events that connect the non-travel events for the day
-    const travelEvents: TripEvent[] = [];
-    const sortedActivities = [...nonTravelEvents].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
-    const lastEventPerMember: Record<string, (TripEvent & { isCrossDay?: boolean }) | null> = {};
-
-    const isRoutableEvent = (e: TripEvent) =>
-      !e.hidden &&
-      !!e.location?.lat &&
-      !!e.location?.lng &&
-      (e.status === undefined || e.status === 'confirmed' || e.status === 'pending-meal');
-
-    if (dayIdx > 0) {
-      let prevDayIdx = dayIdx - 1;
-      while (prevDayIdx >= 0) {
-        const prevDayEvents = [...newItin[prevDayIdx].events].sort((a, b) => toMinutes(b.startTime) - toMinutes(a.startTime));
-        const prevDayRoutable = prevDayEvents.filter(isRoutableEvent);
-        
-        if (prevDayRoutable.length > 0) {
-          prevDayRoutable.forEach(e => {
-            const mIds = expandMembers(e.memberIds, masterTravellers);
-            mIds.forEach(mid => {
-              if (!lastEventPerMember[mid]) {
-                lastEventPerMember[mid] = { ...e, isCrossDay: true };
-              }
-            });
-          });
-          if (Object.keys(lastEventPerMember).length > 0) {
-            break;
-          }
-        }
-        prevDayIdx--;
-      }
-    }
-
-    const routableActivities = sortedActivities.filter(isRoutableEvent);
-
-    sortedActivities.forEach(current => {
-      const currentMemberIds = expandMembers(current.memberIds, masterTravellers);
-
-      if (!isRoutableEvent(current)) {
-        return;
-      }
-
-      if (!current.location || !current.location.lat || !current.location.lng) return;
-
-      currentMemberIds.forEach(mid => {
-        const prev = lastEventPerMember[mid];
-        if (prev && prev.location) {
-          const prevLoc = prev.location;
-          const currLoc = current.location!;
-
-          const isDifferentPlace = 
-            Math.abs(prevLoc.lat - currLoc.lat) > 0.0001 || 
-            Math.abs(prevLoc.lng - currLoc.lng) > 0.0001 || 
-            prevLoc.name.toLowerCase() !== currLoc.name.toLowerCase();
-
-          if (isDifferentPlace) {
-            let startTime = prev.endTime || prev.startTime;
-            let gap = toMinutes(current.startTime) - toMinutes(startTime);
-
-            if (prev.isCrossDay) {
-              gap = 999;
-              const currentMin = toMinutes(current.startTime);
-              const travelStartMins = Math.max(0, currentMin - 30);
-              const hrs = Math.floor(travelStartMins / 60);
-              const mins = travelStartMins % 60;
-              startTime = `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-            }
-            const endTime = current.startTime;
-            
-            if (gap >= 0) {
-              // Try to find if user customized an existing travel segment for these exact two events
-              const existingNav = existingTravelEvents.find(t => {
-                const idMatch = t.id.startsWith(`nav-${prev.id}-${current.id}`);
-                const sharedPair = (t.origin?.name && prevLoc.name && t.origin.name === prevLoc.name && t.destination?.name && currLoc.name && t.destination.name === currLoc.name);
-                return idMatch || sharedPair;
-              });
-
-              // Re-use or Create
-              let navEvent: TripEvent;
-              if (existingNav && existingNav.category !== 'flight') { // Don't override flight
-                let reusedTitle = existingNav.title;
-                const oldDest = existingNav.destination?.name || '';
-                if (oldDest && currLoc.name !== oldDest && reusedTitle.endsWith(oldDest)) {
-                  reusedTitle = reusedTitle.substring(0, reusedTitle.length - oldDest.length) + currLoc.name;
-                }
-                navEvent = { ...existingNav, title: reusedTitle, origin: prevLoc, destination: currLoc, startTime, endTime };
-              } else {
-                const inferredMode = inferTravelMode(prevLoc, currLoc, baseMode);
-                navEvent = {
-                  id: `nav-${prev.id}-${current.id}-${Date.now()}`,
-                  type: 'travel',
-                  category: inferredMode,
-                  title: `${getTravelModeLabel(inferredMode)} to ${currLoc.name}`,
-                  origin: prevLoc,
-                  destination: currLoc,
-                  startTime,
-                  endTime,
-                  memberIds: [mid]
-                };
-              }
-
-              // Aggregate members safely
-              const navMembers = travelEvents.find(t => t.id === navEvent.id) 
-                || travelEvents.find(t => t.origin?.name === navEvent.origin?.name && t.destination?.name === navEvent.destination?.name);
-
-              if (navMembers) {
-                if (!navMembers.memberIds) navMembers.memberIds = [];
-                if (!navMembers.memberIds.includes(mid)) navMembers.memberIds.push(mid);
-              } else {
-                if (!navEvent.memberIds) navEvent.memberIds = [];
-                if (!navEvent.memberIds.includes(mid)) navEvent.memberIds.push(mid);
-                travelEvents.push(navEvent);
-              }
-            }
-          }
-        }
-        lastEventPerMember[mid] = current;
-      });
-    });
-
-    const finalEvents = [...nonTravelEvents, ...travelEvents].sort((a, b) => {
-      const timeA = toMinutes(a.startTime);
-      const timeB = toMinutes(b.startTime);
-      if (timeA !== timeB) return timeA - timeB;
-      if (a.type === 'travel' && b.type !== 'travel') return 1;
-      if (a.type !== 'travel' && b.type === 'travel') return -1;
-      return 0;
-    });
-
-    newItin[dayIdx] = { ...day, events: finalEvents };
+    const updatedDay = buildNavigationEventsForDay(day, dayIdx, newItin, masterTravellers, hasRental);
+    newItin[dayIdx] = updatedDay;
     return newItin;
   };
 
