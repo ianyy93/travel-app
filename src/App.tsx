@@ -1708,11 +1708,8 @@ export default function App() {
 
     newItinerary[dayIdx] = { ...day, events: newEvents };
     
-    // Rebuild navigation for this day and the next day (to update cross-day travel)
-    newItinerary = recalculateRoutesAroundEvent(dayIdx, eventId, newItinerary);
-    if (dayIdx + 1 < newItinerary.length) {
-      newItinerary = recalculateRoutesAroundEvent(dayIdx + 1, '', newItinerary);
-    }
+    // Rebuild navigation for the whole itinerary so any new location change gets a matching travel segment
+    newItinerary = syncNavigationEvents(newItinerary);
     
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
@@ -1786,8 +1783,9 @@ export default function App() {
         })
       };
     });
-    setItinerary(finalItinerary);
-    saveToFirestore(finalItinerary);
+    const rebuiltItinerary = syncNavigationEvents(finalItinerary);
+    setItinerary(rebuiltItinerary);
+    saveToFirestore(rebuiltItinerary);
   };
 
   const handleDeleteTrip = async (tripId: string) => {
@@ -2159,6 +2157,14 @@ export default function App() {
 
     newItin[dayIdx] = { ...day, events: finalEvents };
     return newItin;
+  };
+
+  const syncNavigationEvents = (inputItin: DayPlan[], explicitRentalInfo?: any) => {
+    let nextItin = [...inputItin];
+    for (let dayIdx = 0; dayIdx < nextItin.length; dayIdx++) {
+      nextItin = recalculateRoutesAroundEvent(dayIdx, '', nextItin, explicitRentalInfo);
+    }
+    return nextItin;
   };
 
   const handleGenerateNavigation = () => {
@@ -2661,15 +2667,11 @@ export default function App() {
     if (actIdx === null) {
       const newEvent = { ...updated, id: Math.random().toString(36).substr(2, 9) };
       newItinerary[dayIdx].events.push(newEvent);
-      newItinerary = recalculateRoutesAroundEvent(dayIdx, newEvent.id, newItinerary);
     } else {
       newItinerary[dayIdx].events[actIdx] = updated;
-      newItinerary = recalculateRoutesAroundEvent(dayIdx, updated.id, newItinerary);
     }
     
-    if (dayIdx + 1 < newItinerary.length) {
-      newItinerary = recalculateRoutesAroundEvent(dayIdx + 1, '', newItinerary);
-    }
+    newItinerary = syncNavigationEvents(newItinerary);
     
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
@@ -2737,10 +2739,7 @@ export default function App() {
     const eventId = newItinerary[dayIdx].events[actIdx].id;
     newItinerary[dayIdx].events.splice(actIdx, 1);
     
-    newItinerary = recalculateRoutesAroundEvent(dayIdx, eventId, newItinerary);
-    if (dayIdx + 1 < newItinerary.length) {
-      newItinerary = recalculateRoutesAroundEvent(dayIdx + 1, '', newItinerary);
-    }
+    newItinerary = syncNavigationEvents(newItinerary);
     
     setItinerary(newItinerary);
     saveToFirestore(newItinerary);
@@ -2783,8 +2782,9 @@ export default function App() {
         };
         return toMin(a.startTime) - toMin(b.startTime);
     });
-    setItinerary(newItinerary);
-    saveToFirestore(newItinerary);
+    const rebuiltItinerary = syncNavigationEvents(newItinerary);
+    setItinerary(rebuiltItinerary);
+    saveToFirestore(rebuiltItinerary);
   };
 
 
