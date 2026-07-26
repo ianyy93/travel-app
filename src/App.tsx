@@ -4048,7 +4048,7 @@ export default function App() {
           {/* Collapsible AI Assistant Pane */}
           {/* Note: using position absolute on mobile to overlay, and relative/flex-basis on desktop to push content */}
           <div className={cn(
-            "absolute inset-y-0 right-0 md:static z-50 bg-white border-l border-slate-200 flex flex-col transition-all duration-300 shadow-2xl md:shadow-none overflow-hidden",
+            "fixed inset-y-0 right-0 md:static md:inset-y-auto md:right-auto z-50 bg-white border-l border-slate-200 flex flex-col transition-all duration-300 shadow-2xl md:shadow-none overflow-hidden",
             isAiAssistantOpen ? "translate-x-0 w-[85%] sm:w-[350px] md:w-[30%]" : "translate-x-full w-[85%] sm:w-[350px] md:w-0 md:translate-x-0 md:border-none"
           )}>
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
