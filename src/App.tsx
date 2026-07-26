@@ -1529,7 +1529,9 @@ export default function App() {
   const [shortlist, setShortlist] = useState<any[]>([]);
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [expandedTrips, setExpandedTrips] = useState<Set<string>>(new Set());
-  const [tripsList, setTripsList] = useState<{id: string, title: string, date: string, year?: string}[]>([]);
+  const [tripsList, setTripsList] = useState<{id: string, title: string, date: string, year?: string}[]>([
+    { id: 'main', title: 'AI-tinerary 2026', date: 'May 14 - May 19', year: '2026' }
+  ]);
   const [tripTitle, setTripTitle] = useState('');
   const [isLoadingTrip, setIsLoadingTrip] = useState(true);
   const [tripDates, setTripDates] = useState('');
@@ -2557,6 +2559,9 @@ export default function App() {
             restaurants: RESTAURANT_DETAILS
           })).catch(err => handleFirestoreError(err, OperationType.WRITE, path));
         } else {
+          setItinerary(ITINERARY_DATA);
+          setTripTitle('AI-tinerary 2026');
+          setTripDates('May 14 - May 19');
           setIsLoadingTrip(false);
         }
       } else {
@@ -2618,15 +2623,13 @@ export default function App() {
     return () => unsubscribe();
   }, [user, isAdmin]);
 
-  // Fetch all trips
+  // Fetch all trips (public read allowed by Firestore rules)
   useEffect(() => {
-    if (!user) return;
-    
     const tripsCollection = collection(db, 'trips');
     const unsubscribe = onSnapshot(tripsCollection, (snapshot) => {
-      const trips = snapshot.docs.map(doc => {
+      let trips = snapshot.docs.map(doc => {
         const data = doc.data();
-        const title = data.title || (doc.id === 'main' ? 'AI-tinerary' : 'New Trip');
+        const title = data.title || (doc.id === 'main' ? 'AI-tinerary 2026' : 'New Trip');
         const dates = data.dates || (doc.id === 'main' ? 'May 14 - May 19' : 'Dates TBD');
         const yearMatch = title.match(/\d{4}/) || dates.match(/\d{4}/);
         const year = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();
@@ -2638,13 +2641,29 @@ export default function App() {
           year
         };
       }).filter(t => !deletingTripIds.has(t.id));
+
+      if (!trips.some(t => t.id === 'main')) {
+        trips.unshift({
+          id: 'main',
+          title: 'AI-tinerary 2026',
+          date: 'May 14 - May 19',
+          year: '2026'
+        });
+      }
+
       setTripsList(trips);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'trips');
+      setTripsList([{
+        id: 'main',
+        title: 'AI-tinerary 2026',
+        date: 'May 14 - May 19',
+        year: '2026'
+      }]);
     });
 
     return () => unsubscribe();
-  }, [user, deletingTripIds]);
+  }, [deletingTripIds]);
 
   // Scroll to earliest event time in Grid (All Days) view
   useEffect(() => {

@@ -12,16 +12,22 @@ export function getApiBaseUrl(): string {
 
   const currentOrigin = normalizeUrl(window.location.origin);
 
+  const isStalePreviewUrl = (url: string) => url.includes('ais-pre-');
+
   // 1. Check localStorage for an override (set via the browser prompt on connection error)
   const saved = localStorage.getItem('BACKEND_URL');
   if (saved) {
-    const normalizedSaved = normalizeUrl(saved);
-    if (normalizedSaved && normalizedSaved !== currentOrigin) return normalizedSaved;
+    if (isStalePreviewUrl(saved)) {
+      localStorage.removeItem('BACKEND_URL');
+    } else {
+      const normalizedSaved = normalizeUrl(saved);
+      if (normalizedSaved && normalizedSaved !== currentOrigin) return normalizedSaved;
+    }
   }
 
   // 2. Check for baked-in URL from build process (set via VITE_APP_URL env var)
   const bakedUrl = import.meta.env.VITE_APP_URL || (typeof process !== 'undefined' && process.env ? (process.env as any).APP_URL : '');
-  if (bakedUrl) {
+  if (bakedUrl && !isStalePreviewUrl(bakedUrl)) {
     const normalizedBaked = normalizeUrl(bakedUrl);
     if (normalizedBaked && normalizedBaked !== currentOrigin) {
       return normalizedBaked;
