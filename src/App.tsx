@@ -4048,7 +4048,7 @@ export default function App() {
           {/* Collapsible AI Assistant Pane */}
           {/* Note: using position absolute on mobile to overlay, and relative/flex-basis on desktop to push content */}
           <div className={cn(
-            "fixed inset-y-0 right-0 md:static md:inset-y-auto md:right-auto z-50 bg-white border-l border-slate-200 flex flex-col transition-all duration-300 shadow-2xl md:shadow-none overflow-hidden",
+            "fixed top-0 bottom-[4.5rem] right-0 md:static md:top-auto md:bottom-auto md:right-auto z-50 bg-white border-l border-slate-200 flex flex-col transition-all duration-300 shadow-2xl md:shadow-none overflow-hidden",
             isAiAssistantOpen ? "translate-x-0 w-[85%] sm:w-[350px] md:w-[30%]" : "translate-x-full w-[85%] sm:w-[350px] md:w-0 md:translate-x-0 md:border-none"
           )}>
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
@@ -4104,39 +4104,39 @@ export default function App() {
 
             {/* Prompt Input Box */}
             <div className="p-3 border-t border-slate-100 bg-white min-w-[250px] shrink-0">
-              <div className="relative">
-                <textarea 
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder="e.g., 'Add a dinner spot on Day 1'"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 pr-11 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none h-20"
-                  disabled={isAiLoading}
-                />
-                {isAiLoading ? (
-                  <div className="absolute right-3 bottom-3">
-                    <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                ) : (
-                  <div className="absolute right-2 bottom-2 flex gap-1">
-                    <button
-                      onClick={() => handleAiAction('shortlist')}
-                      disabled={!aiPrompt.trim()}
-                      title="Search for places and add to shortlist"
-                      className="p-2 bg-indigo-100 hover:bg-indigo-200 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-600 rounded-lg transition-colors"
-                    >
-                      <MapPin className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => handleAiAction('full')}
-                      disabled={!aiPrompt.trim()}
-                      title="Apply changes to itinerary"
-                      className="p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg transition-colors shadow-sm"
-                    >
-                      <ArrowRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
+              <textarea 
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                placeholder="e.g., 'Add a dinner spot on Day 1'"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none h-20 mb-2"
+                disabled={isAiLoading}
+              />
+              {isAiLoading ? (
+                <div className="flex justify-center py-1">
+                  <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleAiAction('shortlist')}
+                    disabled={!aiPrompt.trim()}
+                    title="Search for places and add to shortlist"
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-indigo-100 hover:bg-indigo-200 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-600 rounded-xl text-xs font-bold transition-colors"
+                  >
+                    <MapPin className="h-4 w-4" />
+                    <span>Shortlist</span>
+                  </button>
+                  <button
+                    onClick={() => handleAiAction('full')}
+                    disabled={!aiPrompt.trim()}
+                    title="Apply changes to itinerary"
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-xs font-bold transition-colors shadow-sm"
+                  >
+                    <ArrowRight className="h-4 w-4" />
+                    <span>Apply</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
           
