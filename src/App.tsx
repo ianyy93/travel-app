@@ -1178,6 +1178,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'calendar' | 'places' | 'info'>('calendar');
   const [calendarViewMode, setCalendarViewMode] = useState<'schedule' | 'grid'>('schedule');
   const [hourHeight, setHourHeight] = useState<number>(80);
+  const [colWidth, setColWidth] = useState<number>(288);
   const calendarGridHeaderHeight = 72;
   const [selectedEventForModal, setSelectedEventForModal] = useState<{ event: TripEvent, dayIdx: number, eventIdx: number } | null>(null);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
@@ -1230,6 +1231,8 @@ export default function App() {
   const gridScrollContainerRef = useRef<HTMLDivElement>(null);
   const hourHeightRef = useRef<number>(80);
   useEffect(() => { hourHeightRef.current = hourHeight; }, [hourHeight]);
+  const colWidthRef = useRef<number>(288);
+  useEffect(() => { colWidthRef.current = colWidth; }, [colWidth]);
 
   const [weatherData, setWeatherData] = useState<Record<number, WeatherInfo>>({});
 
@@ -2349,49 +2352,68 @@ export default function App() {
     }
   }, [calendarViewMode, hourHeight, itinerary]);
 
-  // Pinch-to-zoom on the All Days grid — like a spreadsheet
+  // Pinch-to-zoom on the All Days grid — like a spreadsheet (both axes)
   useEffect(() => {
     const el = gridScrollContainerRef.current;
     if (!el) return;
 
-    let lastDist = 0;
+    let lastDx = 0;
+    let lastDy = 0;
     let lastHourHeight = 80;
-    let pinchMidY = 0; // midpoint Y relative to the element (including scroll)
-
-    const getTouchDist = (t: TouchList) =>
-      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    let lastColWidth = 288;
+    let pinchMidY = 0;
+    let pinchMidX = 0;
 
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
-        lastDist = getTouchDist(e.touches);
+        lastDx = Math.abs(e.touches[0].clientX - e.touches[1].clientX);
+        lastDy = Math.abs(e.touches[0].clientY - e.touches[1].clientY);
         lastHourHeight = hourHeightRef.current;
+        lastColWidth = colWidthRef.current;
         const rect = el.getBoundingClientRect();
         const midClientY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        pinchMidY = midClientY - rect.top + el.scrollTop; // absolute Y in content
+        const midClientX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        pinchMidY = midClientY - rect.top + el.scrollTop;
+        pinchMidX = midClientX - rect.left + el.scrollLeft;
       }
     };
 
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 2) return;
-      e.preventDefault(); // block native page zoom
+      e.preventDefault();
 
-      const dist = getTouchDist(e.touches);
-      if (lastDist === 0) { lastDist = dist; return; }
+      const dx = Math.abs(e.touches[0].clientX - e.touches[1].clientX);
+      const dy = Math.abs(e.touches[0].clientY - e.touches[1].clientY);
 
-      const scale = dist / lastDist;
-      const next = Math.min(200, Math.max(40, lastHourHeight * scale));
+      // Vertical scale → hourHeight
+      if (lastDy > 10) {
+        const scaleY = dy / lastDy;
+        const nextH = Math.min(200, Math.max(40, lastHourHeight * scaleY));
+        const ratioY = nextH / lastHourHeight;
+        el.scrollTop = pinchMidY * ratioY - (pinchMidY - el.scrollTop);
+        setHourHeight(nextH);
+        lastHourHeight = nextH;
+      }
 
-      // Keep pinch midpoint fixed: scrollTop adjusts proportionally
-      const ratio = next / lastHourHeight;
-      el.scrollTop = pinchMidY * ratio - (pinchMidY - el.scrollTop);
+      // Horizontal scale → colWidth
+      if (lastDx > 10) {
+        const scaleX = dx / lastDx;
+        const nextW = Math.min(480, Math.max(120, lastColWidth * scaleX));
+        const ratioX = nextW / lastColWidth;
+        el.scrollLeft = pinchMidX * ratioX - (pinchMidX - el.scrollLeft);
+        setColWidth(nextW);
+        lastColWidth = nextW;
+      }
 
-      setHourHeight(next);
-      lastHourHeight = next;
-      lastDist = dist;
+      lastDx = dx;
+      lastDy = dy;
     };
 
     const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) { lastDist = 0; }
+      if (e.touches.length < 2) {
+        lastDx = 0;
+        lastDy = 0;
+      }
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: true });
@@ -3940,7 +3962,7 @@ export default function App() {
                               };
 
                               return (
-                                <div key={i} className="w-72 shrink-0 border-r border-slate-200 relative flex flex-col z-10">
+                                <div key={i} className="shrink-0 border-r border-slate-200 relative flex flex-col z-10" style={{ width: colWidth }}>
                                   {/* Header */}
                                   <div className="p-3 border-b border-slate-200 bg-slate-50/90 backdrop-blur-md sticky top-0 z-30 overflow-hidden shrink-0 flex flex-col justify-center" style={{ height: calendarGridHeaderHeight }}>
                                     <div className="flex justify-between items-center mb-0.5">
