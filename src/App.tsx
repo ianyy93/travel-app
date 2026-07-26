@@ -1228,6 +1228,9 @@ export default function App() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridScrollContainerRef = useRef<HTMLDivElement>(null);
+  const hourHeightRef = useRef<number>(80);
+  useEffect(() => { hourHeightRef.current = hourHeight; }, [hourHeight]);
+
   const [weatherData, setWeatherData] = useState<Record<number, WeatherInfo>>({});
 
   const [activeFilter, setActiveFilter] = useState<string>('all');
@@ -2345,6 +2348,63 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [calendarViewMode, hourHeight, itinerary]);
+
+  // Pinch-to-zoom on the All Days grid — like a spreadsheet
+  useEffect(() => {
+    const el = gridScrollContainerRef.current;
+    if (!el) return;
+
+    let lastDist = 0;
+    let lastHourHeight = 80;
+    let pinchMidY = 0; // midpoint Y relative to the element (including scroll)
+
+    const getTouchDist = (t: TouchList) =>
+      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        lastDist = getTouchDist(e.touches);
+        lastHourHeight = hourHeightRef.current;
+        const rect = el.getBoundingClientRect();
+        const midClientY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        pinchMidY = midClientY - rect.top + el.scrollTop; // absolute Y in content
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      e.preventDefault(); // block native page zoom
+
+      const dist = getTouchDist(e.touches);
+      if (lastDist === 0) { lastDist = dist; return; }
+
+      const scale = dist / lastDist;
+      const next = Math.min(200, Math.max(40, lastHourHeight * scale));
+
+      // Keep pinch midpoint fixed: scrollTop adjusts proportionally
+      const ratio = next / lastHourHeight;
+      el.scrollTop = pinchMidY * ratio - (pinchMidY - el.scrollTop);
+
+      setHourHeight(next);
+      lastHourHeight = next;
+      lastDist = dist;
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) { lastDist = 0; }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [calendarViewMode]);
+
 
   const toggleEventExpansion = (id: string) => {
     setExpandedEvents(prev => {
