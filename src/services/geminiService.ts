@@ -69,14 +69,15 @@ export const geminiService = {
       });
 
       if (!response.ok) {
-        if (response.status === 405 && typeof window !== 'undefined') {
+        if ((response.status === 404 || response.status === 405) && typeof window !== 'undefined') {
           const newUrl = window.prompt(
-            "API Error 405: This usually means you are on a static host like Cloudflare and the backend URL is not configured.\n\nPlease enter your backend (Cloud Run) URL (e.g. https://your-app.run.app):",
+            "Backend API Not Found (404/405): You are currently on a static host (Cloudflare Workers). Please enter your backend (Cloud Run / Render) server URL (e.g. https://your-backend.run.app):",
             getApiBaseUrl()
           );
           if (newUrl) {
             localStorage.setItem('BACKEND_URL', newUrl);
             window.location.reload();
+            return {} as any;
           }
         }
 
@@ -87,7 +88,6 @@ export const geminiService = {
             errorMessage = errorData.error;
           }
         } catch (e) {
-          // Fallback if not JSON
           const text = await response.text().catch(() => "");
           if (text && text.length < 200 && text.includes("{")) {
              errorMessage = `Server Error (${response.status}): ${text}`;
@@ -140,6 +140,17 @@ export const geminiService = {
       });
 
       if (!response.ok) {
+        if ((response.status === 404 || response.status === 405) && typeof window !== 'undefined') {
+          const newUrl = window.prompt(
+            "Backend API Not Found (404/405): You are currently on a static host (Cloudflare Workers). Please enter your backend (Cloud Run / Render) server URL (e.g. https://your-backend.run.app):",
+            getApiBaseUrl()
+          );
+          if (newUrl) {
+            localStorage.setItem('BACKEND_URL', newUrl);
+            window.location.reload();
+            return [] as any;
+          }
+        }
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || `Failed to refine suggestions: ${response.statusText}`);
       }
