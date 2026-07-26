@@ -22,6 +22,11 @@
   z-index: 10;
 }
 
+.custom-map-pin {
+  background: transparent !important;
+  border: none !important;
+}
+
 /* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

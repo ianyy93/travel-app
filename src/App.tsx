@@ -92,7 +92,7 @@ import {
   User,
   signOut
 } from 'firebase/auth';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { weatherService, WeatherInfo } from './services/weatherService';
 import { geminiService, GeminiProposal, GenerationMode } from './services/geminiService';
@@ -668,6 +668,100 @@ const AddPlaceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (plac
   );
 };
 
+// Palette for different days and shortlist
+const DAY_COLORS = [
+  '#2563eb', // Day 1: Royal Blue
+  '#059669', // Day 2: Emerald
+  '#d97706', // Day 3: Amber
+  '#7c3aed', // Day 4: Violet
+  '#db2777', // Day 5: Pink
+  '#0891b2', // Day 6: Cyan
+  '#ea580c', // Day 7: Orange
+  '#4f46e5', // Day 8: Indigo
+  '#0d9488', // Day 9: Teal
+  '#c026d3', // Day 10+: Fuchsia
+];
+const SHORTLIST_COLOR = '#eab308'; // Gold
+
+const getDayColor = (dayIdx: number | undefined | null) => {
+  if (dayIdx === undefined || dayIdx === null || dayIdx < 0) return SHORTLIST_COLOR;
+  return DAY_COLORS[dayIdx % DAY_COLORS.length];
+};
+
+const getCategoryIconSvg = (cat: string) => {
+  switch (cat) {
+    case 'restaurant':
+    case 'food':
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 2v6a3 3 0 0 1-3 3 3 3 0 0 1-3-3V2"/><path d="M15 2v16"/><path d="M8 2v8"/><path d="M4 2v8a4 4 0 0 0 8 0V2"/></svg>`;
+    case 'stay':
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`;
+    case 'shopping':
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>`;
+    case 'work':
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="7" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>`;
+    case 'logistics':
+    case 'flight':
+    case 'transit':
+    case 'drive':
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.7 5.2c.3.4.8.5 1.3.3l.5-.3c.4-.2.6-.6.5-1.1z"/></svg>`;
+    case 'attraction':
+    default:
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>`;
+  }
+};
+
+const createCustomMarkerIcon = (category: string, color: string) => {
+  const iconSvg = getCategoryIconSvg(category);
+  const html = `
+    <div style="position: relative; display: flex; flex-direction: column; align-items: center;">
+      <div style="
+        background-color: ${color};
+        color: white;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        border: 2px solid white;
+      ">
+        ${iconSvg}
+      </div>
+      <div style="
+        width: 0; 
+        height: 0; 
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-top: 6px solid ${color};
+        margin-top: -1px;
+      "></div>
+    </div>
+  `;
+  return L.divIcon({
+    html,
+    className: 'custom-map-pin',
+    iconSize: [32, 38],
+    iconAnchor: [16, 38],
+    popupAnchor: [0, -34],
+  });
+};
+
+const MapBoundsFitter = ({ places }: { places: any[] }) => {
+  const map = useMap();
+  useEffect(() => {
+    const validCoords = places
+      .filter(p => p.location && typeof p.location.lat === 'number' && typeof p.location.lng === 'number')
+      .map(p => [p.location.lat, p.location.lng] as [number, number]);
+
+    if (validCoords.length > 0) {
+      const bounds = L.latLngBounds(validCoords);
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+    }
+  }, [places, map]);
+  return null;
+};
+
 const PlacesView = ({ 
   itinerary, 
   shortlist, 
@@ -690,9 +784,12 @@ const PlacesView = ({
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [viewMode, setViewMode] = useState<'split' | 'map' | 'list'>('split');
+  const [selectedDayFilter, setSelectedDayFilter] = useState<number | 'all' | 'shortlist'>('all');
+  const [showRoutes, setShowRoutes] = useState<boolean>(true);
 
   // Extract all places from itinerary
-    const itineraryPlaces = useMemo(() => {
+  const itineraryPlaces = useMemo(() => {
     if (!itinerary || !Array.isArray(itinerary)) return [];
     const places: any[] = [];
     const seen = new Map<string, any>();
@@ -721,13 +818,10 @@ const PlacesView = ({
       const existing = seen.get(key);
       
       if (existing) {
-        // Add visit to existing place
         if (dayIdx !== undefined && eventId && !existing.visits.some((v: any) => v.dayIdx === dayIdx && v.eventId === eventId)) {
           existing.visits.push({ dayDate, dayIdx, eventId });
-          // Sort visits by dayIdx
           existing.visits.sort((a: any, b: any) => a.dayIdx - b.dayIdx);
         }
-        // If this visit has a manual category and the existing one doesn't, update it
         if (manualCategory && !existing.manualCategory) {
           existing.manualCategory = manualCategory;
           existing.category = manualCategory;
@@ -755,13 +849,10 @@ const PlacesView = ({
     itinerary.forEach((day, dayIdx) => {
       if (!day || !day.events) return;
       day.events.forEach(event => {
-        // Skip suggestion events entirely
         if (event.status === 'suggestion') return;
 
-        // Skip logistics keywords unless manually set
         if (isLogistics(event.location?.name, event.category) && !event.manualCategory && event.status !== 'confirmed') return;
 
-        // Skip generic locations unless manually overridden
         const lowerLoc = event.location?.name.toLowerCase() || '';
         const isGeneric = event.location && (
           (lowerLoc.includes(' area') || lowerLoc.includes(' neighborhood')) ||
@@ -770,26 +861,18 @@ const PlacesView = ({
         if (event.location && isGeneric && !event.manualCategory && event.status !== 'confirmed') return;
         
         if (event.location) {
-          let cat = 'attraction'; // Rule #6: Default
+          let cat = 'attraction';
           
-          // Manual Override always first
           if (event.manualCategory) {
             cat = event.manualCategory;
           } else {
-            // Rule #1: Stays
             if (event.category === 'stay') {
               cat = 'stay';
-            }
-            // Rule #2: Logistics
-            else if (isLogistics(event.location.name, event.category)) {
+            } else if (isLogistics(event.location.name, event.category)) {
               cat = 'logistics';
-            }
-            // Rule #4: Restaurants
-            else if (event.category === 'food') {
+            } else if (event.category === 'food') {
               cat = 'restaurant';
-            }
-            // Rule #5: Shopping
-            else if (isShopping(event.location.name, event.description)) {
+            } else if (isShopping(event.location.name, event.description)) {
               cat = 'shopping';
             }
           }
@@ -803,7 +886,6 @@ const PlacesView = ({
           });
         }
         
-        // Handle travel events (only if they are stays or logistics)
         if (!event.manualCategory) {
           if (event.origin && event.category === 'stay') {
             addPlace(event.origin, 'stay', `itinerary-${event.id}-origin`, day.date, event.description, undefined, event.id, dayIdx);
@@ -817,24 +899,106 @@ const PlacesView = ({
     return places;
   }, [itinerary]);
 
-  const allPlaces = [...itineraryPlaces, ...(Array.isArray(shortlist) ? shortlist : []).map(p => ({ ...p, source: 'shortlist' }))];
+  const allPlaces = useMemo(() => {
+    const formattedShortlist = (Array.isArray(shortlist) ? shortlist : []).map(p => ({
+      ...p,
+      source: 'shortlist',
+      location: p.location || (typeof p.lat === 'number' && typeof p.lng === 'number' ? { name: p.name, lat: p.lat, lng: p.lng } : undefined)
+    }));
+    return [...itineraryPlaces, ...formattedShortlist];
+  }, [itineraryPlaces, shortlist]);
 
-  const filteredPlaces = allPlaces.filter(p => {
-    const matchesFilter = filter === 'all' || p.category === filter;
-    const matchesSearch = (p.name || '').toLowerCase().includes(search.toLowerCase());
-    return matchesFilter && matchesSearch;
-  });
+  const filteredPlaces = useMemo(() => {
+    return allPlaces.filter(p => {
+      const matchesFilter = filter === 'all' || p.category === filter;
+      const matchesSearch = (p.name || '').toLowerCase().includes(search.toLowerCase());
+      return matchesFilter && matchesSearch;
+    });
+  }, [allPlaces, filter, search]);
+
+  const mapPlaces = useMemo(() => {
+    return filteredPlaces.filter(p => {
+      if (!p.location || typeof p.location.lat !== 'number' || typeof p.location.lng !== 'number') return false;
+      if (selectedDayFilter === 'all') return true;
+      if (selectedDayFilter === 'shortlist') return p.source === 'shortlist';
+      if (typeof selectedDayFilter === 'number') {
+        if (p.source === 'shortlist') return false;
+        return p.visits && p.visits.some((v: any) => v.dayIdx === selectedDayFilter);
+      }
+      return true;
+    });
+  }, [filteredPlaces, selectedDayFilter]);
+
+  const dayRoutes = useMemo(() => {
+    if (!showRoutes || !itinerary || !Array.isArray(itinerary)) return [];
+
+    const routes: { dayIdx: number; dayDate: string; color: string; positions: [number, number][] }[] = [];
+
+    itinerary.forEach((day, dayIdx) => {
+      if (selectedDayFilter !== 'all' && selectedDayFilter !== dayIdx) return;
+
+      const coords: [number, number][] = [];
+      if (day && day.events) {
+        day.events.forEach(event => {
+          if (event.location && typeof event.location.lat === 'number' && typeof event.location.lng === 'number') {
+            coords.push([event.location.lat, event.location.lng]);
+          }
+        });
+      }
+
+      if (coords.length > 1) {
+        routes.push({
+          dayIdx,
+          dayDate: day.date,
+          color: getDayColor(dayIdx),
+          positions: coords
+        });
+      }
+    });
+
+    return routes;
+  }, [itinerary, showRoutes, selectedDayFilter]);
+
+  const defaultCenter: [number, number] = [33.4342, -112.0081];
 
   return (
-    <div className="w-full">
-      {/* Sticky Header */}
-      <div className="sticky top-0 z-[100] bg-slate-50/95 backdrop-blur-md p-6 pb-4 space-y-6 border-b border-slate-100 shadow-sm w-full">
+    <div className="w-full space-y-4">
+      {/* Sticky Header & Filters */}
+      <div className="sticky top-0 z-[100] bg-slate-50/95 backdrop-blur-md p-4 sm:p-6 pb-4 space-y-4 border-b border-slate-100 shadow-sm w-full">
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Places</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-2xl font-black text-slate-900 tracking-tight">Places</h2>
+            
+            {/* View Mode Toggle: Split / Map / List */}
+            <div className="flex bg-slate-200/60 p-1 rounded-xl">
+              <button 
+                onClick={() => setViewMode('split')}
+                className={cn("px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1", viewMode === 'split' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}
+                title="Split View"
+              >
+                <span>Split</span>
+              </button>
+              <button 
+                onClick={() => setViewMode('map')}
+                className={cn("px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1", viewMode === 'map' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}
+                title="Map View"
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                <span>Map</span>
+              </button>
+              <button 
+                onClick={() => setViewMode('list')}
+                className={cn("px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1", viewMode === 'list' ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}
+                title="List View"
+              >
+                <span>List</span>
+              </button>
+            </div>
+          </div>
+
           <div className="flex gap-2">
             <button 
               onClick={() => {
-                // Force a re-render of itineraryPlaces by slightly modifying search (hacky but works for quick sync)
                 setSearch(s => s + ' ');
                 setTimeout(() => setSearch(s => s.trim()), 10);
               }}
@@ -854,7 +1018,7 @@ const PlacesView = ({
           </div>
         </div>
 
-        {/* Search & Filter */}
+        {/* Search & Category Filter */}
         <div className="space-y-3">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -863,16 +1027,16 @@ const PlacesView = ({
               placeholder="Search places..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide py-1">
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide py-0.5">
             {['all', 'attraction', 'restaurant', 'shopping', 'stay', 'logistics', 'work'].map(cat => (
               <button
                 key={cat}
                 onClick={() => setFilter(cat)}
                 className={cn(
-                  "px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap",
+                  "px-3.5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap",
                   filter === cat 
                     ? "bg-slate-900 text-white border-slate-900" 
                     : "bg-white text-slate-400 border-slate-100"
@@ -883,132 +1047,296 @@ const PlacesView = ({
             ))}
           </div>
         </div>
+
+        {/* Date / Day Filter & Map Controls (Visible in Map & Split views) */}
+        {viewMode !== 'list' && (
+          <div className="pt-2 border-t border-slate-200/60 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap mr-1">
+                Filter Days:
+              </span>
+              <button
+                onClick={() => setSelectedDayFilter('all')}
+                className={cn(
+                  "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 whitespace-nowrap",
+                  selectedDayFilter === 'all'
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
+                )}
+              >
+                <span>All Days</span>
+              </button>
+
+              {itinerary.map((day, dIdx) => {
+                const dayColor = getDayColor(dIdx);
+                const isSelected = selectedDayFilter === dIdx;
+                return (
+                  <button
+                    key={dIdx}
+                    onClick={() => setSelectedDayFilter(dIdx)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 whitespace-nowrap border",
+                      isSelected
+                        ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                        : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                    )}
+                  >
+                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: dayColor }} />
+                    <span>Day {dIdx + 1} ({day.date})</span>
+                  </button>
+                );
+              })}
+
+              <button
+                onClick={() => setSelectedDayFilter('shortlist')}
+                className={cn(
+                  "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 whitespace-nowrap border",
+                  selectedDayFilter === 'shortlist'
+                    ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                    : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                )}
+              >
+                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SHORTLIST_COLOR }} />
+                <span>Shortlist ★</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setShowRoutes(!showRoutes)}
+              className={cn(
+                "px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 whitespace-nowrap border ml-auto",
+                showRoutes
+                  ? "bg-indigo-50 text-indigo-600 border-indigo-200"
+                  : "bg-white text-slate-400 border-slate-200"
+              )}
+            >
+              <Route className="w-3.5 h-3.5" />
+              <span>{showRoutes ? 'Routes On' : 'Routes Off'}</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Places List */}
-      <div className="p-6 pb-32 grid gap-4 w-full max-w-full overflow-x-hidden">
-        {filteredPlaces.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
-            <p className="text-slate-400 text-sm">No places found matching your filter.</p>
-          </div>
-        ) : (
-          filteredPlaces.map((place, idx) => (
-            <div key={idx} className="bg-white p-4 rounded-3xl border border-slate-100 flex items-start justify-between group w-full max-w-full overflow-hidden">
-              <div className="flex items-start gap-4 min-w-0 flex-1">
-                <div className={cn(
-                  "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 mt-1",
-                  place.category === 'restaurant' ? "bg-orange-50 text-orange-600" :
-                  place.category === 'shopping' ? "bg-purple-50 text-purple-600" :
-                  place.category === 'stay' ? "bg-blue-50 text-blue-600" :
-                  place.category === 'logistics' ? "bg-slate-100 text-slate-600" :
-                  place.category === 'work' ? "bg-blue-50 text-blue-600" :
-                  "bg-green-50 text-green-600"
-                )}>
-                  {place.category === 'restaurant' ? <Utensils className="w-5 h-5" /> :
-                   place.category === 'shopping' ? <ShoppingBag className="w-5 h-5" /> :
-                   place.category === 'stay' ? <Home className="w-5 h-5" /> :
-                   place.category === 'logistics' ? <Plane className="w-5 h-5" /> :
-                   place.category === 'work' ? <Briefcase className="w-5 h-5" /> :
-                   <MapPin className="w-5 h-5" />}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h4 className="font-bold text-slate-900 leading-tight break-words">{place.name}</h4>
-                  <div className="flex items-center gap-2 mt-1 flex-wrap">
-                    {place.source === 'itinerary' && isAdmin ? (
-                      <select 
-                        value={place.manualCategory || ''}
-                        onChange={(e) => {
-                          const newCat = e.target.value || undefined;
-                          const newItinerary = itinerary.map((d, dIdx) => {
-                            if (dIdx !== place.dayIdx) return d;
-                            return {
-                              ...d,
-                              events: d.events.map(ev => {
-                                if (ev.id !== place.eventId) return ev;
-                                return { ...ev, manualCategory: newCat };
-                              })
-                            };
-                          });
-                          onUpdateItinerary(newItinerary);
-                          onSaveToFirestore(newItinerary);
-                        }}
-                        className="text-[10px] font-black uppercase tracking-tighter text-blue-600 bg-blue-50 border-none p-0 focus:ring-0 cursor-pointer hover:underline"
-                      >
-                        <option value="">Auto: {place.category}</option>
-                        <option value="attraction">Attraction</option>
-                        <option value="restaurant">Restaurant</option>
-                        <option value="shopping">Shopping</option>
-                        <option value="stay">Stay</option>
-                        <option value="logistics">Logistics</option>
-                        <option value="work">Work</option>
-                      </select>
-                    ) : (
-                      <span className="text-[10px] font-black uppercase tracking-tighter text-slate-400">
-                        {place.category}
-                      </span>
-                    )}
-                    {place.visits && place.visits.length > 0 ? (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {place.visits.map((visit: any, vIdx: number) => (
-                          <button
-                            key={vIdx}
-                            onClick={() => onNavigateToEvent(visit.dayIdx, visit.eventId)}
-                            className="text-[10px] font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 transition-colors whitespace-nowrap"
+      {/* Map View */}
+      {viewMode !== 'list' && (
+        <div className="px-4 sm:px-6">
+          <div className={cn(
+            "w-full rounded-3xl overflow-hidden border border-slate-200 shadow-sm relative bg-slate-100 z-0",
+            viewMode === 'map' ? "h-[65vh]" : "h-[380px]"
+          )}>
+            <MapContainer 
+              center={mapPlaces.length > 0 && mapPlaces[0].location ? [mapPlaces[0].location.lat, mapPlaces[0].location.lng] : defaultCenter} 
+              zoom={10} 
+              className="w-full h-full"
+            >
+              <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+              <MapBoundsFitter places={mapPlaces} />
+
+              {/* Render Route Lines */}
+              {showRoutes && dayRoutes.map((route, rIdx) => (
+                <Polyline
+                  key={rIdx}
+                  positions={route.positions}
+                  color={route.color}
+                  weight={4}
+                  opacity={0.8}
+                  dashArray="6, 8"
+                />
+              ))}
+
+              {/* Render Place Markers */}
+              {mapPlaces.map((place, idx) => {
+                const color = getDayColor(place.source === 'shortlist' ? null : place.dayIdx);
+                return (
+                  <Marker
+                    key={place.id || idx}
+                    position={[place.location.lat, place.location.lng]}
+                    icon={createCustomMarkerIcon(place.category, color)}
+                  >
+                    <Popup>
+                      <div className="p-1 max-w-[220px]">
+                        <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                          <span 
+                            className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase text-white"
+                            style={{ backgroundColor: color }}
                           >
-                            {visit.dayDate}
-                          </button>
-                        ))}
+                            {place.source === 'shortlist' ? 'Shortlist' : `Day ${(place.dayIdx ?? 0) + 1}`}
+                          </span>
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">
+                            {place.category}
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-sm text-slate-900 leading-tight">{place.name}</h4>
+                        {place.description && (
+                          <p className="text-xs text-slate-600 mt-1 italic line-clamp-2">{place.description}</p>
+                        )}
+                        {place.visits && place.visits.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {place.visits.map((visit: any, vIdx: number) => (
+                              <button
+                                key={vIdx}
+                                onClick={() => onNavigateToEvent(visit.dayIdx, visit.eventId)}
+                                className="text-[10px] font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 transition-colors"
+                              >
+                                Go to {visit.dayDate}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {place.location && (
+                          <div className="flex gap-2 mt-2.5 pt-2 border-t border-slate-100">
+                            <a 
+                              href={getGoogleMapsUrl(place.location)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[10px] font-bold text-blue-600 flex items-center gap-1 hover:underline"
+                            >
+                              <MapIcon className="w-3 h-3" /> Google Maps
+                            </a>
+                            <a 
+                              href={getAppleMapsUrl(place.location)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[10px] font-bold text-slate-500 flex items-center gap-1 hover:underline"
+                            >
+                              <Navigation className="w-3 h-3" /> Apple Maps
+                            </a>
+                          </div>
+                        )}
                       </div>
-                    ) : place.dayDate && (
-                      <span className="text-[10px] font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full whitespace-nowrap mt-1">
-                        {place.dayDate}
-                      </span>
+                    </Popup>
+                  </Marker>
+                );
+              })}
+            </MapContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Places List (Visible in List & Split views) */}
+      {viewMode !== 'map' && (
+        <div className="p-4 sm:p-6 pb-32 grid gap-4 w-full max-w-full overflow-x-hidden">
+          {filteredPlaces.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 border-dashed">
+              <p className="text-slate-400 text-sm">No places found matching your filter.</p>
+            </div>
+          ) : (
+            filteredPlaces.map((place, idx) => (
+              <div key={idx} className="bg-white p-4 rounded-3xl border border-slate-100 flex items-start justify-between group w-full max-w-full overflow-hidden shadow-sm">
+                <div className="flex items-start gap-4 min-w-0 flex-1">
+                  <div 
+                    className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 mt-1 text-white shadow-sm"
+                    style={{ backgroundColor: getDayColor(place.source === 'shortlist' ? null : place.dayIdx) }}
+                  >
+                    {place.category === 'restaurant' ? <Utensils className="w-5 h-5" /> :
+                     place.category === 'shopping' ? <ShoppingBag className="w-5 h-5" /> :
+                     place.category === 'stay' ? <Home className="w-5 h-5" /> :
+                     place.category === 'logistics' ? <Plane className="w-5 h-5" /> :
+                     place.category === 'work' ? <Briefcase className="w-5 h-5" /> :
+                     <MapPin className="w-5 h-5" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h4 className="font-bold text-slate-900 leading-tight break-words">{place.name}</h4>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      {place.source === 'itinerary' && isAdmin ? (
+                        <select 
+                          value={place.manualCategory || ''}
+                          onChange={(e) => {
+                            const newCat = e.target.value || undefined;
+                            const newItinerary = itinerary.map((d, dIdx) => {
+                              if (dIdx !== place.dayIdx) return d;
+                              return {
+                                ...d,
+                                events: d.events.map(ev => {
+                                  if (ev.id !== place.eventId) return ev;
+                                  return { ...ev, manualCategory: newCat };
+                                })
+                              };
+                            });
+                            onUpdateItinerary(newItinerary);
+                            onSaveToFirestore(newItinerary);
+                          }}
+                          className="text-[10px] font-black uppercase tracking-tighter text-blue-600 bg-blue-50 border-none p-0 focus:ring-0 cursor-pointer hover:underline"
+                        >
+                          <option value="">Auto: {place.category}</option>
+                          <option value="attraction">Attraction</option>
+                          <option value="restaurant">Restaurant</option>
+                          <option value="shopping">Shopping</option>
+                          <option value="stay">Stay</option>
+                          <option value="logistics">Logistics</option>
+                          <option value="work">Work</option>
+                        </select>
+                      ) : (
+                        <span className="text-[10px] font-black uppercase tracking-tighter text-slate-400">
+                          {place.category}
+                        </span>
+                      )}
+                      {place.visits && place.visits.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {place.visits.map((visit: any, vIdx: number) => (
+                            <button
+                              key={vIdx}
+                              onClick={() => onNavigateToEvent(visit.dayIdx, visit.eventId)}
+                              className="text-[10px] font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 transition-colors whitespace-nowrap"
+                            >
+                              {visit.dayDate}
+                            </button>
+                          ))}
+                        </div>
+                      ) : place.dayDate && (
+                        <span className="text-[10px] font-medium text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full whitespace-nowrap mt-1">
+                          {place.dayDate}
+                        </span>
+                      )}
+                    </div>
+                    {place.description && (
+                      <p className="text-[10px] text-slate-500 mt-2 italic bg-slate-50 p-2 rounded-lg border border-slate-100 break-words">
+                        <span className="font-bold not-italic text-slate-400 mr-1">Note:</span>
+                        {place.description}
+                      </p>
                     )}
                   </div>
-                  {place.description && (
-                    <p className="text-[10px] text-slate-500 mt-2 italic bg-slate-50 p-2 rounded-lg border border-slate-100 break-words">
-                      <span className="font-bold not-italic text-slate-400 mr-1">Note:</span>
-                      {place.description}
-                    </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 ml-2 mt-1">
+                  {place.location && (
+                    <div className="flex gap-1">
+                      <a 
+                        href={getAppleMapsUrl(place.location)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-blue-600 transition-all"
+                        title="Apple Maps"
+                      >
+                        <Navigation className="w-4 h-4" />
+                      </a>
+                      <a 
+                        href={getGoogleMapsUrl(place.location)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-blue-600 transition-all"
+                        title="Google Maps"
+                      >
+                        <MapIcon className="w-4 h-4" />
+                      </a>
+                    </div>
+                  )}
+                  {place.source === 'shortlist' && isAdmin && (
+                    <button 
+                      onClick={() => onRemoveShortlist(place.id)}
+                      className="p-2 hover:bg-red-50 rounded-xl text-slate-300 hover:text-red-600 transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0 ml-2 mt-1">
-                {place.location && (
-                  <div className="flex gap-1">
-                    <a 
-                      href={getAppleMapsUrl(place.location)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-blue-600 transition-all"
-                      title="Apple Maps"
-                    >
-                      <Navigation className="w-4 h-4" />
-                    </a>
-                    <a 
-                      href={getGoogleMapsUrl(place.location)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="p-2 hover:bg-slate-50 rounded-xl text-slate-300 hover:text-blue-600 transition-all"
-                      title="Google Maps"
-                    >
-                      <MapIcon className="w-4 h-4" />
-                    </a>
-                  </div>
-                )}
-                {place.source === 'shortlist' && isAdmin && (
-                  <button 
-                    onClick={() => onRemoveShortlist(place.id)}
-                    className="p-2 hover:bg-red-50 rounded-xl text-slate-300 hover:text-red-600 transition-all"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Add Place Modal */}
       <AnimatePresence>
