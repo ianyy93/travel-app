@@ -27,6 +27,8 @@ export interface GeminiProposal {
   };
 }
 
+import { getApiBaseUrl } from '../utils/api';
+
 export type GenerationMode = 'full' | 'details' | 'places' | 'navigation' | 'shortlist' | 'autofill';
 
 export const geminiService = {
@@ -44,9 +46,10 @@ export const geminiService = {
     currentRestaurants: any[] = [],
     currentExperiences: any[] = []
   ): Promise<GeminiProposal> {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const response = await fetch(`${origin}/api/gemini/propose`, {
+    const baseUrl = getApiBaseUrl();
+    const response = await fetch(`${baseUrl}/api/gemini/propose`, {
       method: "POST",
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
       },
@@ -98,9 +101,10 @@ export const geminiService = {
     event: any,
     refinePrompt: string
   ): Promise<any[]> {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const response = await fetch(`${origin}/api/gemini/refine`, {
+    const baseUrl = getApiBaseUrl();
+    const response = await fetch(`${baseUrl}/api/gemini/refine`, {
       method: "POST",
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
       },
