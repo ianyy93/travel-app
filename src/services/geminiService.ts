@@ -50,7 +50,6 @@ export const geminiService = {
     const response = await fetch(`${baseUrl}/api/gemini/propose`, {
       method: "POST",
       credentials: "include",
-      redirect: "manual",
       headers: {
         "Content-Type": "application/json",
       },
@@ -71,17 +70,6 @@ export const geminiService = {
     });
 
     if (!response.ok) {
-      if (response.status === 405 || response.status === 403 || response.type === 'opaqueredirect') {
-        // AI Studio's auth proxy intercepts API requests if the session expires or cookies are missing.
-        // It redirects (302) to an HTML cookie check page. Since this is a POST request, the browser
-        // follows the redirect with a POST, which the static HTML page rejects with a 405 Method Not Allowed.
-        // The fix is to reload the page to restore the authentication session.
-        if (typeof window !== 'undefined') {
-          window.location.reload();
-        }
-        throw new Error("Session expired. Reloading the page to authenticate...");
-      }
-
       let errorMessage = `Failed to propose changes: ${response.status} ${response.statusText}`;
       try {
         const errorData = await response.json();
@@ -117,7 +105,6 @@ export const geminiService = {
     const response = await fetch(`${baseUrl}/api/gemini/refine`, {
       method: "POST",
       credentials: "include",
-      redirect: "manual",
       headers: {
         "Content-Type": "application/json",
       },
@@ -128,13 +115,6 @@ export const geminiService = {
     });
 
     if (!response.ok) {
-      if (response.status === 405 || response.status === 403 || response.type === 'opaqueredirect') {
-        if (typeof window !== 'undefined') {
-          window.location.reload();
-        }
-        throw new Error("Session expired. Reloading the page to authenticate...");
-      }
-
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData.error || `Failed to refine suggestions: ${response.statusText}`);
     }

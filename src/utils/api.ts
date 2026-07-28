@@ -1,6 +1,11 @@
 export function getApiBaseUrl(): string {
-  // Always use relative paths so that fetch resolves against the current document's base URL.
-  // This is crucial in sandboxed iframes where window.location.origin might be "null",
-  // and we want to rely on the browser's native relative path resolution.
+  if (typeof process !== 'undefined' && process.env && process.env.APP_URL) {
+    return process.env.APP_URL.replace(/\/$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('BACKEND_URL');
+    if (saved) return saved.replace(/\/$/, '');
+    return '';
+  }
   return '';
 }

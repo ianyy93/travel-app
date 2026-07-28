@@ -19,14 +19,8 @@ export const gasService = {
     try {
       // Fetch via backend proxy to bypass CORS/sandboxed iframe fetch blocks and protect the API key
       const response = await fetch(`${getApiBaseUrl()}/api/gas`, {
-        credentials: "include",
-        redirect: "manual"
+        credentials: "include"
       });
-
-      if (response.type === 'opaqueredirect' || response.status === 403 || response.status === 302) {
-        if (typeof window !== 'undefined') window.location.reload();
-        return null;
-      }
 
       if (!response.ok) {
         // If the key is missing or invalid, return a graceful fallback 
