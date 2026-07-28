@@ -98,7 +98,7 @@ export function GmailImport({ onProposalReceived, currentItinerary, tripTitle, t
         emails.map(e => `Subject: ${e.subject}\nDate: ${e.date}\nFrom: ${e.from}\nBody: ${e.body}`).join('\n\n--- NEXT EMAIL ---\n\n');
         
       const proposal = await geminiService.proposeChanges(
-        'gemini-3.5-flash',
+        'gemini-3.6-flash',
         currentItinerary,
         prompt,
         'details' // use details mode to parse reservations

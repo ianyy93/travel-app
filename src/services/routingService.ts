@@ -1,5 +1,3 @@
-import { getApiBaseUrl } from "../utils/api";
-
 export type TravelMode = 'drive' | 'walk' | 'bike' | 'transit' | 'flight' | 'rideshare';
 
 export async function getRealTravelTimeMins(
@@ -10,6 +8,7 @@ export async function getRealTravelTimeMins(
   let profile = 'driving';
   if (mode === 'walk') profile = 'foot';
   if (mode === 'bike') profile = 'cycling';
+  if (mode === 'rideshare') profile = 'driving';
   
   if (mode === 'transit' || mode === 'flight') {
     return null; // OSRM doesn't support transit/flights, fallback to math
@@ -17,9 +16,8 @@ export async function getRealTravelTimeMins(
 
   try {
     // Fetch via backend proxy to bypass CORS/sandboxed iframe fetch blocks
-    const response = await fetch(`${getApiBaseUrl()}/api/routing?profile=${profile}&coordinates=${lon1},${lat1};${lon2},${lat2}`, {
-      credentials: "include"
-    });
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const response = await fetch(`${origin}/api/routing?profile=${profile}&coordinates=${lon1},${lat1};${lon2},${lat2}`);
     if (!response.ok) return null;
     const data = await response.json();
     if (data.routes && data.routes[0]) {

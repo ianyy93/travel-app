@@ -1,6 +1,5 @@
 import { Location } from "../constants";
 import { parseItineraryDate } from "../lib/utils";
-import { getApiBaseUrl } from "../utils/api";
 
 export interface WeatherInfo {
   minTemp: number;
@@ -52,10 +51,9 @@ export const weatherService = {
       }
 
       // Use the server-side proxy to bypass CORS/sandboxed iframe fetch blocks
-      const proxyUrl = `${getApiBaseUrl()}/api/weather?lat=${loc.lat}&lng=${loc.lng}&date=${dateString}&isArchive=${diffDays < 0}`;
-      const res = await fetch(proxyUrl, {
-        credentials: "include"
-      });
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const proxyUrl = `${origin}/api/weather?lat=${loc.lat}&lng=${loc.lng}&date=${dateString}&isArchive=${diffDays < 0}`;
+      const res = await fetch(proxyUrl);
       if (!res.ok) {
         throw new Error(`Weather proxy returned status ${res.status}`);
       }

@@ -313,11 +313,11 @@ async function generateContentWithRetry(params: any, retries = 3, initialDelay =
   // Define fallback models in order of priority to handle quota exhaustion or temporary server high demand dynamically
   const fallbackChain = [
     originalModel,
-    "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-flash-preview",
-    "gemini-2.5-flash-lite-preview"
-  ].filter((model, idx, self) => self.indexOf(model) === idx); // Deduplicate while maintaining original model as first choice
+    "gemini-3.6-flash",
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-pro-preview"
+  ].filter(Boolean).filter((model, idx, self) => self.indexOf(model) === idx); // Deduplicate while maintaining original model as first choice
   
   for (const currentModel of fallbackChain) {
     params.model = currentModel;
@@ -333,11 +333,15 @@ async function generateContentWithRetry(params: any, retries = 3, initialDelay =
         const isTransientOrQuota = error.name === 'HeadersTimeoutError' || error.message?.includes('fetch failed') || error.message?.includes('Timeout') || error.message?.includes('Unexpected token') || error.message?.includes('is not valid JSON') || error.status === 429 || 
                                    error.status === 503 ||
                                    error.status === 504 ||
+                                   error.status === 404 ||
                                    error.code === 503 ||
                                    error.code === 429 ||
+                                   error.code === 404 ||
                                    (error.message && (
                                      error.message.includes("429") || 
                                      error.message.includes("503") || 
+                                     error.message.includes("404") ||
+                                     error.message.toLowerCase().includes("not found") || 
                                      error.message.toLowerCase().includes("quota") ||
                                      error.message.toLowerCase().includes("exhausted") ||
                                      error.message.toLowerCase().includes("rate limit") ||
@@ -637,7 +641,7 @@ app.post("/api/gemini/propose", async (req, res) => {
       const reservationConfig = {
         systemInstruction: reservationParserSystemInstruction,
         responseMimeType: "application/json",
-        maxOutputTokens: 2048,
+        maxOutputTokens: 8192,
         temperature: 0.1,
         responseSchema: {
           type: Type.OBJECT,
@@ -743,7 +747,7 @@ app.post("/api/gemini/propose", async (req, res) => {
         }
       };
 
-      const activeModel = model || 'gemini-3.5-flash';
+      const activeModel = model || 'gemini-3.6-flash';
       const params = prepareGenerateParams(activeModel, userPrompt, reservationConfig);
             let parsed;
       let rawResponseText = '';
@@ -922,7 +926,7 @@ app.post("/api/gemini/propose", async (req, res) => {
     const config: any = {
       systemInstruction,
       responseMimeType: "application/json",
-      maxOutputTokens: 4096,
+      maxOutputTokens: 8192,
       temperature: 0.2,
       responseSchema: {
         type: Type.OBJECT,
@@ -1149,7 +1153,7 @@ app.post("/api/gemini/propose", async (req, res) => {
       config.tools = tools;
     }
 
-    const activeModel = model || 'gemini-3.5-flash';
+    const activeModel = model || 'gemini-3.6-flash';
     console.log(`[Server] Generating content with model: ${activeModel}`);
     const params = prepareGenerateParams(activeModel, userPrompt, config);
         let parsed;
@@ -1234,7 +1238,7 @@ app.post("/api/gemini/refine", async (req, res) => {
     const config: any = {
       systemInstruction,
       responseMimeType: "application/json",
-      maxOutputTokens: 1024,
+      maxOutputTokens: 2048,
       temperature: 0.2,
       responseSchema: {
         type: Type.ARRAY,
@@ -1256,7 +1260,7 @@ app.post("/api/gemini/refine", async (req, res) => {
     }
 
     const initialContents = "Refine suggestions based on: " + refinePrompt;
-    const activeModel = model || 'gemini-3.5-flash';
+    const activeModel = model || 'gemini-3.6-flash';
     console.log(`[Server] Refining suggestions with model: ${activeModel}`);
     const params = prepareGenerateParams(activeModel, initialContents, config);
         try {

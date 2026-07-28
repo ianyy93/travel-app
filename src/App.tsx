@@ -1698,7 +1698,7 @@ export default function App() {
       const finalPrompt = customPrompt || aiPrompt.trim() || (mode === 'autofill' ? 'Review my current itinerary and create only pending suggestion slots and optional suggestions for open gaps. Do not add confirmed activities unless explicitly requested.' : aiPrompt);
       
       const isNewTrip = view === 'list' || itinerary.length === 0;
-      const targetModel = 'gemini-3.5-flash';
+      const targetModel = 'gemini-3.6-flash';
       
       console.log('AI Action:', mode, 'Model:', targetModel, 'Prompt:', finalPrompt);
       
