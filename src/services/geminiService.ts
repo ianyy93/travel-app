@@ -27,9 +27,9 @@ export interface GeminiProposal {
   };
 }
 
-import { getApiBaseUrl } from '../utils/api';
-
 export type GenerationMode = 'full' | 'details' | 'places' | 'navigation' | 'shortlist' | 'autofill';
+
+import { proposeChangesLogic, refineLogic } from './aiLogic';
 
 export const geminiService = {
   async proposeChanges(
@@ -46,14 +46,8 @@ export const geminiService = {
     currentRestaurants: any[] = [],
     currentExperiences: any[] = []
   ): Promise<GeminiProposal> {
-    const baseUrl = getApiBaseUrl();
-    const response = await fetch(`${baseUrl}/api/gemini/propose`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const req = {
+      body: {
         model,
         currentItinerary,
         userPrompt,
@@ -66,66 +60,23 @@ export const geminiService = {
         currentRentalInfo,
         currentRestaurants,
         currentExperiences,
-      }),
-    });
-
-    if (!response.ok) {
-      let errorMessage = `Failed to propose changes: ${response.status} ${response.statusText}`;
-      try {
-        const errorData = await response.json();
-        if (errorData.error) {
-          errorMessage = errorData.error;
-        }
-      } catch (e) {
-        // Fallback if not JSON
-        const text = await response.text().catch(() => "");
-        if (text && text.length < 200 && text.includes("{")) {
-           errorMessage = `Server Error (${response.status}): ${text}`;
-        }
       }
-      throw new Error(errorMessage);
-    }
-
+    };
     
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      return response.json();
-    } else {
-      const text = await response.text();
-      throw new Error("Server returned non-JSON response: " + text.substring(0, 100));
-    }
-
+    return await proposeChangesLogic(req);
   },
 
   async refineSuggestions(
     event: any,
     refinePrompt: string
   ): Promise<any[]> {
-    const baseUrl = getApiBaseUrl();
-    const response = await fetch(`${baseUrl}/api/gemini/refine`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const req = {
+      body: {
         event,
         refinePrompt,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Failed to refine suggestions: ${response.statusText}`);
-    }
-
+      }
+    };
     
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      return response.json();
-    } else {
-      const text = await response.text();
-      throw new Error("Server returned non-JSON response for refine: " + text.substring(0, 100));
-    }
+    return await refineLogic(req);
   }
 };

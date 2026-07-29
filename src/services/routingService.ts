@@ -15,10 +15,8 @@ export async function getRealTravelTimeMins(
   }
 
   try {
-    // Fetch via backend proxy to bypass CORS/sandboxed iframe fetch blocks
-    const response = await fetch(`/api/routing?profile=${profile}&coordinates=${lon1},${lat1};${lon2},${lat2}`, {
-      credentials: 'include'
-    });
+    const url = `https://router.project-osrm.org/route/v1/${profile}/${lon1},${lat1};${lon2},${lat2}?overview=false`;
+    const response = await fetch(url);
 
     if (!response.ok) return null;
     const data = await response.json();

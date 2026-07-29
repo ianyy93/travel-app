@@ -17,10 +17,9 @@ export const gasService = {
     }
 
     try {
-      // Fetch via backend proxy to bypass CORS/sandboxed iframe fetch blocks and protect the API key
-      const response = await fetch(`${getApiBaseUrl()}/api/gas`, {
-        credentials: "include"
-      });
+      const apiKey = import.meta.env.VITE_EIA_API_KEY || "DEMO_KEY";
+      const url = `https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key=${apiKey}&frequency=weekly&data[0]=value&facets[series][]=EMM_EPMR_PTE_SAZ_DPG&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=1`;
+      const response = await fetch(url);
 
       if (!response.ok) {
         // If the key is missing or invalid, return a graceful fallback 

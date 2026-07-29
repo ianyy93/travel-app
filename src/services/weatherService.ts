@@ -38,7 +38,6 @@ export const weatherService = {
       const dateString = date.toISOString().split('T')[0];
       
       let url = '';
-
       if (diffDays < 0) {
         // Date is in the past, use the archive API
         url = `https://archive-api.open-meteo.com/v1/archive?latitude=${loc.lat}&longitude=${loc.lng}&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto&start_date=${dateString}&end_date=${dateString}`;
@@ -50,12 +49,10 @@ export const weatherService = {
         return null;
       }
 
-      // Use the server-side proxy to bypass CORS/sandboxed iframe fetch blocks
-      const proxyUrl = `/api/weather?lat=${loc.lat}&lng=${loc.lng}&date=${dateString}&isArchive=${diffDays < 0}`;
-      const res = await fetch(proxyUrl, { credentials: 'include' });
+      const res = await fetch(url);
 
       if (!res.ok) {
-        throw new Error(`Weather proxy returned status ${res.status}`);
+        throw new Error(`Weather API returned status ${res.status}`);
       }
       const data = await res.json();
 

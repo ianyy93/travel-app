@@ -1,44 +1,7 @@
-import express from "express";
-import cors from "cors";
-import path from "path";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
-import dotenv from "dotenv";
 import { jsonrepair } from "jsonrepair";
 
-// Load environment variables
-dotenv.config();
-
-const app = express();
-const PORT = 3000;
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // In development and for this project's deployments, allow all origins
-    // This is necessary because the app is hosted on Cloudflare Workers (static) 
-    // and talks to Cloud Run (backend).
-    callback(null, true);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 86400 // 24 hours
-}));
-
-// Request logger for debugging connection issues
-app.use((req, res, next) => {
-  console.log(`[Server] ${new Date().toISOString()} ${req.method} ${req.url}`);
-  if (req.headers.origin) {
-    console.log(`[Server] Origin: ${req.headers.origin}`);
-  }
-  next();
-});
-
-app.use(express.json({ limit: '10mb' }));
-
-const GEMINI_KEY = process.env.GEMINI_API_KEY;
-
+const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
 const ai = new GoogleGenAI({
   apiKey: GEMINI_KEY || 'MISSING_KEY',
   httpOptions: {
@@ -566,17 +529,14 @@ function safeParseJSON(text: string): any {
   }
 }
 
-// API routes go here
-app.get("/api/health", (req, res) => {
-  res.json({ 
-    status: "ok", 
-    time: new Date().toISOString(),
-    corsOrigin: req.headers.origin || 'none'
-  });
-});
+
 
 // API Endpoint for Proposing Changes
-app.post("/api/gemini/propose", async (req, res) => {
+export async function proposeChangesLogic(req: any) {
+  const res = {
+    status: (code: number) => res,
+    json: (data: any) => { if (data.error) throw new Error(data.error); return data; }
+  };
   try {
     if (!GEMINI_KEY) {
       return res.status(500).json({ 
@@ -1189,10 +1149,14 @@ app.post("/api/gemini/propose", async (req, res) => {
     const finalError = friendlyMsg || "An unexpected server-side error occurred while proposing changes.";
     res.status(500).json({ error: finalError });
   }
-});
+}
 
 // API Endpoint for Refining Suggestions
-app.post("/api/gemini/refine", async (req, res) => {
+export async function refineLogic(req: any) {
+  const res = {
+    status: (code: number) => res,
+    json: (data: any) => { if (data.error) throw new Error(data.error); return data; }
+  };
   try {
     if (!GEMINI_KEY) {
       return res.status(500).json({ 
@@ -1276,94 +1240,5 @@ app.post("/api/gemini/refine", async (req, res) => {
     const finalError = friendlyMsg || "An unexpected server-side error occurred while refining suggestions.";
     res.status(500).json({ error: finalError });
   }
-});
-
-// Proxy endpoint for Weather API
-app.get("/api/weather", async (req, res) => {
-  try {
-    const { lat, lng, date, isArchive } = req.query;
-    if (!lat || !lng || !date) {
-      return res.status(400).json({ error: "Missing required query parameters: lat, lng, date" });
-    }
-
-    const baseUrl = isArchive === "true"
-      ? "https://archive-api.open-meteo.com/v1/archive"
-      : "https://api.open-meteo.com/v1/forecast";
-
-    const url = `${baseUrl}?latitude=${lat}&longitude=${lng}&daily=temperature_2m_max,temperature_2m_min,weathercode&timezone=auto&start_date=${date}&end_date=${date}`;
-
-    console.log(`[Server] Proxying weather request to: ${url}`);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Weather API returned status ${response.status}`);
-    }
-    const data = await response.json();
-    res.json(data);
-  } catch (error: any) {
-    console.error("[Server] Weather proxy error:", error);
-    res.status(500).json({ error: error.message || "Failed to fetch weather from proxy" });
-  }
-});
-
-// Proxy endpoint for OSRM Routing API
-app.get("/api/routing", async (req, res) => {
-  try {
-    const { profile, coordinates } = req.query;
-    if (!profile || !coordinates) {
-      return res.status(400).json({ error: "Missing required query parameters: profile, coordinates" });
-    }
-    const url = `https://router.project-osrm.org/route/v1/${profile}/${coordinates}?overview=false`;
-    console.log(`[Server] Proxying routing request to: ${url}`);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`OSRM routing API returned status ${response.status}`);
-    }
-    const data = await response.json();
-    res.json(data);
-  } catch (error: any) {
-    console.error("[Server] Routing proxy error:", error);
-    res.status(500).json({ error: error.message || "Failed to fetch route from proxy" });
-  }
-});
-
-// Proxy endpoint for EIA Gas Price API
-app.get("/api/gas", async (req, res) => {
-  try {
-    const apiKey = process.env.VITE_EIA_API_KEY || process.env.EIA_API_KEY || "DEMO_KEY";
-    const url = `https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key=${apiKey}&frequency=weekly&data[0]=value&facets[series][]=EMM_EPMR_PTE_SAZ_DPG&sort[0][column]=period&sort[0][direction]=desc&offset=0&length=1`;
-
-    console.log(`[Server] Proxying gas request`);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`EIA API returned status ${response.status}`);
-    }
-    const data = await response.json();
-    res.json(data);
-  } catch (error: any) {
-    console.error("[Server] Gas proxy error:", error);
-    res.status(500).json({ error: error.message || "Failed to fetch gas price from proxy" });
-  }
-});
-
-async function startServer() {
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Server] Running on http://0.0.0.0:${PORT}`);
-  });
 }
 
-startServer();
