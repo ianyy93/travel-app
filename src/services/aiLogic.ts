@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { jsonrepair } from "jsonrepair";
 
-let GEMINI_KEY = process.env.GEMINI_API_KEY;
+let GEMINI_KEY = (typeof process !== 'undefined' && process.env) ? process.env.GEMINI_API_KEY : undefined;
 let ai = new GoogleGenAI({
   apiKey: GEMINI_KEY || 'MISSING_KEY',
   httpOptions: {
