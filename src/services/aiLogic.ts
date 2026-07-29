@@ -1,8 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { jsonrepair } from "jsonrepair";
 
-const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const ai = new GoogleGenAI({
+let GEMINI_KEY = process.env.GEMINI_API_KEY;
+let ai = new GoogleGenAI({
   apiKey: GEMINI_KEY || 'MISSING_KEY',
   httpOptions: {
     timeout: 300000, // 5 minutes
@@ -11,6 +11,21 @@ const ai = new GoogleGenAI({
     }
   }
 });
+
+export function updateGenAIKey(key: string) {
+  if (key && key !== GEMINI_KEY) {
+    GEMINI_KEY = key;
+    ai = new GoogleGenAI({
+      apiKey: GEMINI_KEY,
+      httpOptions: {
+        timeout: 300000, // 5 minutes
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+}
 
 const QUOTA_LIMITS: Record<string, number> = {
   "gemini-3-flash-preview": 20,
