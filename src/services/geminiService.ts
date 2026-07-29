@@ -29,8 +29,6 @@ export interface GeminiProposal {
 
 export type GenerationMode = 'full' | 'details' | 'places' | 'navigation' | 'shortlist' | 'autofill';
 
-import { proposeChangesLogic, refineLogic } from './aiLogic';
-
 export const geminiService = {
   async proposeChanges(
     model: string,
@@ -46,37 +44,59 @@ export const geminiService = {
     currentRestaurants: any[] = [],
     currentExperiences: any[] = []
   ): Promise<GeminiProposal> {
-    const req = {
-      body: {
-        model,
-        currentItinerary,
-        userPrompt,
-        mode,
-        pastTripsSummary,
-        currentMembers,
-        currentShortlist,
-        currentStays,
-        currentFlightInfo,
-        currentRentalInfo,
-        currentRestaurants,
-        currentExperiences,
-      }
+    const reqBody = {
+      model,
+      currentItinerary,
+      userPrompt,
+      mode,
+      pastTripsSummary,
+      currentMembers,
+      currentShortlist,
+      currentStays,
+      currentFlightInfo,
+      currentRentalInfo,
+      currentRestaurants,
+      currentExperiences,
     };
     
-    return await proposeChangesLogic(req);
+    const response = await fetch('/api/proposeChanges', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(reqBody)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Server error: ${response.status}`);
+    }
+
+    return await response.json();
   },
 
   async refineSuggestions(
     event: any,
     refinePrompt: string
   ): Promise<any[]> {
-    const req = {
-      body: {
-        event,
-        refinePrompt,
-      }
+    const reqBody = {
+      event,
+      refinePrompt,
     };
     
-    return await refineLogic(req);
+    const response = await fetch('/api/refineSuggestions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(reqBody)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Server error: ${response.status}`);
+    }
+
+    return await response.json();
   }
 };

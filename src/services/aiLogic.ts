@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { jsonrepair } from "jsonrepair";
 
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const ai = new GoogleGenAI({
   apiKey: GEMINI_KEY || 'MISSING_KEY',
   httpOptions: {
@@ -532,12 +532,7 @@ function safeParseJSON(text: string): any {
 
 
 // API Endpoint for Proposing Changes
-export async function proposeChangesLogic(req: any) {
-  const res = {
-    status: (code: number) => res,
-    json: (data: any) => { if (data.error) throw new Error(data.error); return data; }
-  };
-  try {
+export async function proposeChangesLogic(req: any, res: any) {  try {
     if (!GEMINI_KEY) {
       return res.status(500).json({ 
         error: "Gemini API key is missing. Please add GEMINI_API_KEY to your environment settings." 
@@ -1152,12 +1147,7 @@ export async function proposeChangesLogic(req: any) {
 }
 
 // API Endpoint for Refining Suggestions
-export async function refineLogic(req: any) {
-  const res = {
-    status: (code: number) => res,
-    json: (data: any) => { if (data.error) throw new Error(data.error); return data; }
-  };
-  try {
+export async function refineLogic(req: any, res: any) {  try {
     if (!GEMINI_KEY) {
       return res.status(500).json({ 
         error: "Gemini API key is missing. Please add GEMINI_API_KEY to your environment settings." 
