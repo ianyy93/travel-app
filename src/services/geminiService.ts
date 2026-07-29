@@ -68,8 +68,16 @@ export const geminiService = {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Server error: ${response.status}`);
+      const responseText = await response.text().catch(() => '');
+      let errorMsg = `Server error: ${response.status} ${response.statusText}`;
+      try {
+        const parsed = JSON.parse(responseText);
+        if (parsed.error) errorMsg = parsed.error;
+      } catch (_) {
+        if (responseText) errorMsg += ` - ${responseText}`;
+      }
+      console.error("[geminiService] proposeChanges failed:", response.status, responseText);
+      throw new Error(errorMsg);
     }
 
     return await response.json();
@@ -93,8 +101,16 @@ export const geminiService = {
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Server error: ${response.status}`);
+      const responseText = await response.text().catch(() => '');
+      let errorMsg = `Server error: ${response.status} ${response.statusText}`;
+      try {
+        const parsed = JSON.parse(responseText);
+        if (parsed.error) errorMsg = parsed.error;
+      } catch (_) {
+        if (responseText) errorMsg += ` - ${responseText}`;
+      }
+      console.error("[geminiService] refineSuggestions failed:", response.status, responseText);
+      throw new Error(errorMsg);
     }
 
     return await response.json();
