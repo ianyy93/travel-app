@@ -805,12 +805,3 @@ export const STAY_DETAILS = [
 
 export const RESTAURANT_DETAILS = [];
 // --- END ARIZONA ONLY ---
-
-export const GAS_STATIONS = [
-  { name: "Costco Gas", address: "Phoenix, AZ", lat: 33.4484, lng: -112.0740, regular: "$3.85", brand: "Costco" },
-  { name: "Chevron", address: "Grand Canyon Village, AZ", lat: 36.0544, lng: -112.1401, regular: "$4.45", brand: "Chevron" },
-  { name: "Shell", address: "Sedona, AZ", lat: 34.8697, lng: -111.7610, regular: "$4.15", brand: "Shell" },
-  { name: "QuikTrip", address: "Scottsdale, AZ", lat: 33.4942, lng: -111.9261, regular: "$3.95", brand: "QuikTrip" },
-  { name: "Circle K", address: "Phoenix, AZ", lat: 33.5000, lng: -112.1000, regular: "$3.89", brand: "Circle K" },
-  { name: "Maverik", address: "Flagstaff, AZ", lat: 35.1983, lng: -111.6513, regular: "$4.05", brand: "Maverik" },
-];

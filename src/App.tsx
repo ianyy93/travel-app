@@ -68,7 +68,6 @@ import {
   RENTAL_DETAILS, 
   STAY_DETAILS,
   RESTAURANT_DETAILS,
-  GAS_STATIONS, 
   TEMPLATE_VERSION,
   DayPlan, 
   TripEvent,
@@ -94,11 +93,9 @@ import {
 } from 'firebase/auth';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { weatherService, WeatherInfo } from './services/weatherService';
 import { geminiService, GeminiProposal, GenerationMode } from './services/geminiService';
 import { getRealTravelTimeMins } from './services/routingService';
-import { gasService } from './services/gasService';
-import { Fuel, Share2 } from 'lucide-react';
+import { Share2 } from 'lucide-react';
 import { GmailImport } from './components/GmailImport';
 
 // Fix Leaflet icon issues
@@ -159,134 +156,6 @@ const ChangeView = ({ center, zoom }: { center: [number, number], zoom: number }
   return null;
 };
 
-const GasPricesView = ({ userLoc }: { userLoc: [number, number] | null }) => {
-  const [selectedStation, setSelectedStation] = useState<any>(null);
-  const [avgPrice, setAvgPrice] = useState<string | null>(null);
-  const [isLoadingPrice, setIsLoadingPrice] = useState(true);
-
-  useEffect(() => {
-    gasService.getArizonaAverage().then(price => {
-      setAvgPrice(price);
-      setIsLoadingPrice(false);
-    });
-  }, []);
-
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 3958.8; // Miles
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  };
-
-  const sortedStations = useMemo(() => {
-    if (!userLoc) return GAS_STATIONS;
-    return [...GAS_STATIONS].sort((a, b) => {
-      const distA = calculateDistance(userLoc[0], userLoc[1], a.lat, a.lng);
-      const distB = calculateDistance(userLoc[0], userLoc[1], b.lat, b.lng);
-      return distA - distB;
-    });
-  }, [userLoc]);
-
-  const mapCenter: [number, number] = userLoc || [34.0489, -111.0937];
-
-  return (
-    <div className="flex flex-col h-full bg-slate-50">
-      <div className="p-4 bg-white border-b border-slate-200 shrink-0 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">Gas Stations</h2>
-          <p className="text-sm text-slate-500">Sorted by proximity to you</p>
-        </div>
-        {!isLoadingPrice && avgPrice && (
-          <div className="bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-xl border border-emerald-100 flex flex-col items-end text-right">
-            <span className="text-[10px] font-bold uppercase tracking-wider">Avg. AZ Price</span>
-            <span className="text-lg font-black leading-none">${avgPrice}</span>
-          </div>
-        )}
-        {!isLoadingPrice && !avgPrice && (
-          <div className="bg-slate-50 text-slate-500 px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
-            Price data unavailable
-          </div>
-        )}
-      </div>
-      
-      <div className="h-[30vh] shrink-0 relative z-0">
-        <MapContainer center={mapCenter} zoom={7} className="w-full h-full" zoomControl={false}>
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          {userLoc && <ChangeView center={userLoc} zoom={10} />}
-          {GAS_STATIONS.map((station, i) => (
-            <Marker 
-              key={i} 
-              position={[station.lat, station.lng]}
-              eventHandlers={{ click: () => setSelectedStation(station) }}
-            >
-              <Popup>
-                <div className="p-1">
-                  <p className="text-sm font-bold">{station.name}</p>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
-      </div>
-
-      <div className="flex-1 p-4 space-y-4 overflow-y-auto pb-32">
-        <div className="grid gap-3">
-          {sortedStations.map((item, i) => {
-            const dist = userLoc ? calculateDistance(userLoc[0], userLoc[1], item.lat, item.lng).toFixed(1) : null;
-            return (
-              <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{item.brand}</p>
-                    {dist && <span className="text-[10px] font-bold text-blue-600 uppercase">{dist} mi away</span>}
-                  </div>
-                  <p className="font-bold text-slate-800">{item.name}</p>
-                  <p className="text-[10px] text-slate-400">{item.address}</p>
-                </div>
-                <div className="text-right flex flex-col gap-2 items-end">
-                  <a 
-                    href={`https://www.gasbuddy.com/home?search=${encodeURIComponent(item.name + ' ' + item.address)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded-lg font-bold hover:bg-blue-100 transition-colors"
-                  >
-                    Check Live Price
-                  </a>
-                  <div className="flex gap-1 justify-end">
-                    <a 
-                      href={getAppleMapsUrl({ name: item.name, lat: item.lat, lng: item.lng })} 
-                      target="_blank" 
-                      rel="noreferrer" 
-                      className="p-1.5 bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200 transition-colors"
-                    >
-                      <Navigation className="w-3 h-3" />
-                    </a>
-                    <a 
-                      href={`https://www.google.com/maps/search/?api=1&query=${item.lat},${item.lng}`} 
-                      target="_blank" 
-                      rel="noreferrer" 
-                      className="p-1.5 bg-slate-100 rounded-lg text-slate-600 hover:bg-slate-200 transition-colors"
-                    >
-                      <MapIcon className="w-3 h-3" />
-                    </a>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const EventIcon = ({ category, className }: { category: TripCategory; className?: string }) => {
   const cnStr = className || "w-4 h-4";
   switch (category) {
@@ -300,17 +169,6 @@ const EventIcon = ({ category, className }: { category: TripCategory; className?
     case 'work': return <Briefcase className={cnStr} />;
     case 'activity': return <Sun className={cnStr} />;
     default: return <Sparkles className={cnStr} />;
-  }
-};
-
-const WeatherIcon = ({ icon, className }: { icon: string, className?: string }) => {
-  switch (icon) {
-    case 'Sun': return <Sun className={className} />;
-    case 'Cloud': return <Cloud className={className} />;
-    case 'CloudRain': return <CloudRain className={className} />;
-    case 'Snowflake': return <Snowflake className={className} />;
-    case 'CloudLightning': return <CloudLightning className={className} />;
-    default: return <Sun className={className} />;
   }
 };
 
@@ -1564,8 +1422,6 @@ export default function App() {
   const colWidthRef = useRef<number>(288);
   useEffect(() => { colWidthRef.current = colWidth; }, [colWidth]);
 
-  const [weatherData, setWeatherData] = useState<Record<number, WeatherInfo>>({});
-
   const [activeFilter, setActiveFilter] = useState<string>('all');
 
   // Refs for AI Proposal application to avoid stale closures
@@ -1622,28 +1478,6 @@ export default function App() {
     }
     return !!(rentalInfo.company || rentalInfo.car || rentalInfo.confirmation);
   }, [rentalInfo]);
-
-  useEffect(() => {
-    const fetchWeather = async () => {
-      const newWeather: Record<number, WeatherInfo> = {};
-      for (let i = 0; i < itinerary.length; i++) {
-        const day = itinerary[i];
-        // Find a location for this day
-        const loc = day.events.find(e => e.location)?.location || 
-                    day.events.find(e => e.destination)?.destination ||
-                    day.events.find(e => e.origin)?.origin;
-        
-        if (loc) {
-          const info = await weatherService.getWeatherForDay(loc, day.date, tripDates);
-          if (info) {
-            newWeather[i] = info;
-          }
-        }
-      }
-      setWeatherData(newWeather);
-    };
-    fetchWeather();
-  }, [itinerary]);
   
   const handleUndo = async () => {
     if (itineraryHistory.length > 0) {

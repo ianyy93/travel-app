@@ -16,7 +16,14 @@ export async function getRealTravelTimeMins(
 
   try {
     const url = `https://router.project-osrm.org/route/v1/${profile}/${lon1},${lat1};${lon2},${lat2}?overview=false`;
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+      mode: 'cors',
+      credentials: 'omit',
+    });
 
     if (!response.ok) return null;
     const data = await response.json();
